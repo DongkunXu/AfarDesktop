@@ -1,0 +1,31 @@
+# Build products (scripts/clean.sh removes them)
+.build/
+build/
+*.dmg
+*.zip
+
+# Third-party sources and builds (scripts/build-deps.sh recreates them)
+Vendor/.cache/
+Vendor/.work/
+Vendor/prefix/
+
+# Local signing configuration (copy from config/signing.example.env)
+config/signing.env
+
+# SwiftPM / Xcode
+.swiftpm/
+Package.resolved
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# macOS
+.DS_Store
+._*

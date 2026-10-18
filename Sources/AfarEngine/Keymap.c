@@ -1,0 +1,71 @@
+#include "Keymap.h"
+
+// Indexed by kVK_* value. Unlisted entries stay 0, which is RDP_SCANCODE_UNKNOWN.
+static const uint32_t kMacToRdp[128] = {
+    [0x00] = RDP_SCANCODE_KEY_A,         [0x01] = RDP_SCANCODE_KEY_S,
+    [0x02] = RDP_SCANCODE_KEY_D,         [0x03] = RDP_SCANCODE_KEY_F,
+    [0x04] = RDP_SCANCODE_KEY_H,         [0x05] = RDP_SCANCODE_KEY_G,
+    [0x06] = RDP_SCANCODE_KEY_Z,         [0x07] = RDP_SCANCODE_KEY_X,
+    [0x08] = RDP_SCANCODE_KEY_C,         [0x09] = RDP_SCANCODE_KEY_V,
+    [0x0A] = RDP_SCANCODE_OEM_102,       // ISO section key
+    [0x0B] = RDP_SCANCODE_KEY_B,         [0x0C] = RDP_SCANCODE_KEY_Q,
+    [0x0D] = RDP_SCANCODE_KEY_W,         [0x0E] = RDP_SCANCODE_KEY_E,
+    [0x0F] = RDP_SCANCODE_KEY_R,         [0x10] = RDP_SCANCODE_KEY_Y,
+    [0x11] = RDP_SCANCODE_KEY_T,         [0x12] = RDP_SCANCODE_KEY_1,
+    [0x13] = RDP_SCANCODE_KEY_2,         [0x14] = RDP_SCANCODE_KEY_3,
+    [0x15] = RDP_SCANCODE_KEY_4,         [0x16] = RDP_SCANCODE_KEY_6,
+    [0x17] = RDP_SCANCODE_KEY_5,         [0x18] = RDP_SCANCODE_OEM_PLUS,
+    [0x19] = RDP_SCANCODE_KEY_9,         [0x1A] = RDP_SCANCODE_KEY_7,
+    [0x1B] = RDP_SCANCODE_OEM_MINUS,     [0x1C] = RDP_SCANCODE_KEY_8,
+    [0x1D] = RDP_SCANCODE_KEY_0,         [0x1E] = RDP_SCANCODE_OEM_6,
+    [0x1F] = RDP_SCANCODE_KEY_O,         [0x20] = RDP_SCANCODE_KEY_U,
+    [0x21] = RDP_SCANCODE_OEM_4,         [0x22] = RDP_SCANCODE_KEY_I,
+    [0x23] = RDP_SCANCODE_KEY_P,         [0x24] = RDP_SCANCODE_RETURN,
+    [0x25] = RDP_SCANCODE_KEY_L,         [0x26] = RDP_SCANCODE_KEY_J,
+    [0x27] = RDP_SCANCODE_OEM_7,         [0x28] = RDP_SCANCODE_KEY_K,
+    [0x29] = RDP_SCANCODE_OEM_1,         [0x2A] = RDP_SCANCODE_OEM_5,
+    [0x2B] = RDP_SCANCODE_OEM_COMMA,     [0x2C] = RDP_SCANCODE_OEM_2,
+    [0x2D] = RDP_SCANCODE_KEY_N,         [0x2E] = RDP_SCANCODE_KEY_M,
+    [0x2F] = RDP_SCANCODE_OEM_PERIOD,    [0x30] = RDP_SCANCODE_TAB,
+    [0x31] = RDP_SCANCODE_SPACE,         [0x32] = RDP_SCANCODE_OEM_3,
+    [0x33] = RDP_SCANCODE_BACKSPACE,     [0x35] = RDP_SCANCODE_ESCAPE,
+    [0x36] = RDP_SCANCODE_RWIN,          [0x37] = RDP_SCANCODE_LWIN,
+    [0x38] = RDP_SCANCODE_LSHIFT,        [0x39] = RDP_SCANCODE_CAPSLOCK,
+    [0x3A] = RDP_SCANCODE_LMENU,         [0x3B] = RDP_SCANCODE_LCONTROL,
+    [0x3C] = RDP_SCANCODE_RSHIFT,        [0x3D] = RDP_SCANCODE_RMENU,
+    [0x3E] = RDP_SCANCODE_RCONTROL,      [0x40] = RDP_SCANCODE_F17,
+    [0x41] = RDP_SCANCODE_DECIMAL,       [0x43] = RDP_SCANCODE_MULTIPLY,
+    [0x45] = RDP_SCANCODE_ADD,           [0x47] = RDP_SCANCODE_NUMLOCK,
+    [0x48] = RDP_SCANCODE_VOLUME_UP,     [0x49] = RDP_SCANCODE_VOLUME_DOWN,
+    [0x4A] = RDP_SCANCODE_VOLUME_MUTE,   [0x4B] = RDP_SCANCODE_DIVIDE,
+    [0x4C] = RDP_SCANCODE_RETURN_KP,     [0x4E] = RDP_SCANCODE_SUBTRACT,
+    [0x4F] = RDP_SCANCODE_F18,           [0x50] = RDP_SCANCODE_F19,
+    [0x52] = RDP_SCANCODE_NUMPAD0,       [0x53] = RDP_SCANCODE_NUMPAD1,
+    [0x54] = RDP_SCANCODE_NUMPAD2,       [0x55] = RDP_SCANCODE_NUMPAD3,
+    [0x56] = RDP_SCANCODE_NUMPAD4,       [0x57] = RDP_SCANCODE_NUMPAD5,
+    [0x58] = RDP_SCANCODE_NUMPAD6,       [0x59] = RDP_SCANCODE_NUMPAD7,
+    [0x5A] = RDP_SCANCODE_F20,           [0x5B] = RDP_SCANCODE_NUMPAD8,
+    [0x5C] = RDP_SCANCODE_NUMPAD9,       [0x5D] = RDP_SCANCODE_BACKSLASH_JP, // JIS yen
+    [0x5E] = RDP_SCANCODE_ABNT_C1,       // JIS underscore (ro)
+    [0x5F] = RDP_SCANCODE_ABNT_C2,       // JIS keypad comma
+    [0x60] = RDP_SCANCODE_F5,            [0x61] = RDP_SCANCODE_F6,
+    [0x62] = RDP_SCANCODE_F7,            [0x63] = RDP_SCANCODE_F3,
+    [0x64] = RDP_SCANCODE_F8,            [0x65] = RDP_SCANCODE_F9,
+    [0x66] = RDP_SCANCODE_NONCONVERT_JP, // JIS eisu
+    [0x67] = RDP_SCANCODE_F11,
+    [0x68] = RDP_SCANCODE_HIRAGANA,      // JIS kana
+    [0x69] = RDP_SCANCODE_F13,           [0x6A] = RDP_SCANCODE_F16,
+    [0x6B] = RDP_SCANCODE_F14,           [0x6D] = RDP_SCANCODE_F10,
+    [0x6E] = RDP_SCANCODE_APPS,          [0x6F] = RDP_SCANCODE_F12,
+    [0x71] = RDP_SCANCODE_F15,           [0x72] = RDP_SCANCODE_INSERT, // help
+    [0x73] = RDP_SCANCODE_HOME,          [0x74] = RDP_SCANCODE_PRIOR,
+    [0x75] = RDP_SCANCODE_DELETE,        [0x76] = RDP_SCANCODE_F4,
+    [0x77] = RDP_SCANCODE_END,           [0x78] = RDP_SCANCODE_F2,
+    [0x79] = RDP_SCANCODE_NEXT,          [0x7A] = RDP_SCANCODE_F1,
+    [0x7B] = RDP_SCANCODE_LEFT,          [0x7C] = RDP_SCANCODE_RIGHT,
+    [0x7D] = RDP_SCANCODE_DOWN,          [0x7E] = RDP_SCANCODE_UP,
+};
+
+uint32_t afar_scancode_for_mac_keycode(uint16_t keyCode) {
+    return keyCode < 128 ? kMacToRdp[keyCode] : RDP_SCANCODE_UNKNOWN;
+}

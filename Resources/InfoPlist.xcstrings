@@ -1,0 +1,54 @@
+{
+  "sourceLanguage" : "en",
+  "version" : "1.0",
+  "strings" : {
+    "NSLocalNetworkUsageDescription" : {
+      "comment" : "Info.plist: why the app uses the local network",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Afar Desktop connects to remote computers on your local network."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Afar Desktop 会连接你本地网络中的远程电脑。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Afar Desktop 會連線到你本地網路中的遠端電腦。"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Afar Desktop はローカルネットワーク上のリモートコンピュータに接続します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Afar Desktop은 로컬 네트워크에 있는 원격 컴퓨터에 연결합니다."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Afar Desktop se connecte aux ordinateurs distants de votre réseau local."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Afar Desktop si collega ai computer remoti della tua rete locale."
+          }
+        }
+      }
+    }
+  }
+}
