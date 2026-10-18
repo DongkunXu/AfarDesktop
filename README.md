@@ -80,6 +80,13 @@ Builds are signed ad hoc by default. To use your own identity and bundle identif
 `config/signing.example.env` to `config/signing.env` (ignored by git) and fill it in. With a
 stable identity, macOS remembers Keychain access across rebuilds.
 
+### Releases
+
+`scripts/package-release.sh` builds, signs with a Developer ID identity, notarizes, staples and
+zips the app into `build/AfarDesktop-<version>.zip` with its SHA-256. It needs `SIGN_IDENTITY`
+and `NOTARY_PROFILE` in `config/signing.env`. Build the libraries with
+`ARCHS="arm64 x86_64" scripts/build-deps.sh` first for a universal app.
+
 ## Where data lives
 
 | What | Where |

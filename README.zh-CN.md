@@ -51,6 +51,10 @@ scripts/build-app.sh --install # 编译 app，安装到“应用程序”并打�
 
 默认用临时签名（ad hoc）。要用自己的证书和 Bundle ID，把 `config/signing.example.env` 复制为 `config/signing.env`（不进 git）并填写。签名身份固定后，重新编译也不会反复询问钥匙串权限。
 
+### 发布
+
+`scripts/package-release.sh` 会编译 app，用 Developer ID 签名、公证、装订（staple），打包成 `build/AfarDesktop-<版本>.zip` 并附上 SHA-256。需要在 `config/signing.env` 里填好 `SIGN_IDENTITY` 和 `NOTARY_PROFILE`。要出通用版，先用 `ARCHS="arm64 x86_64" scripts/build-deps.sh` 编译依赖库。
+
 ## 数据存放位置
 
 | 内容 | 位置 |

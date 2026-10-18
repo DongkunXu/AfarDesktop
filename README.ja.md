@@ -67,6 +67,12 @@ scripts/build-app.sh --install # アプリをビルドして /Applications に�
 `config/signing.env`（git の対象外）にコピーして記入してください。署名 ID が固定されていれば、
 再ビルドしてもキーチェーンへのアクセスを繰り返し尋ねられません。
 
+### リリース
+
+`scripts/package-release.sh` はアプリをビルドし、Developer ID で署名、公証、ステープルしてから
+`build/AfarDesktop-<バージョン>.zip` と SHA-256 を作ります。`config/signing.env` に `SIGN_IDENTITY` と `NOTARY_PROFILE` が必要です。
+ユニバーサル版にするには、先に `ARCHS="arm64 x86_64" scripts/build-deps.sh` でライブラリをビルドしてください。
+
 ## データの保存場所
 
 | 内容 | 場所 |

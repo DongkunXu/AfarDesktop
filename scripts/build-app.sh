@@ -12,14 +12,19 @@ source "${0:A:h}/_env.sh"
 VERSION=$(<"$ROOT/VERSION")
 BUILD_NUMBER=$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)
 
+# The app is built for the architectures the third-party libraries contain (see build-deps.sh):
+# arm64, or arm64 and x86_64 for a universal app.
+ARCH_FLAGS=()
+for arch in $(lipo -archs "$PREFIX/lib/libAfarFreeRDP.a"); do ARCH_FLAGS+=(--arch "$arch"); done
+
 # The compiler lists every localizable string it sees; the folder persists so an incremental
 # build (which only recompiles changed files) still has the lists of the unchanged ones.
 STRINGS="$ROOT/.build/stringsdata"
 mkdir -p "$STRINGS"
-swift build -c release --product "$EXECUTABLE_NAME" \
+swift build -c release "${ARCH_FLAGS[@]}" --product "$EXECUTABLE_NAME" \
     -Xswiftc -emit-localized-strings -Xswiftc -emit-localized-strings-path -Xswiftc "$STRINGS"
 python3 "$ROOT/tools/sync-strings.py" "$STRINGS" "$ROOT/Resources/Localizable.xcstrings"
-BIN="$(swift build -c release --show-bin-path)/$EXECUTABLE_NAME"
+BIN="$(swift build -c release "${ARCH_FLAGS[@]}" --show-bin-path)/$EXECUTABLE_NAME"
 
 APP="$STAGED_APP"
 _afar_remove_staged_app
@@ -47,7 +52,7 @@ else
     codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP"
 fi
 codesign --verify --strict "$APP"
-echo "Built $APP ($VERSION, build $BUILD_NUMBER, signed: $SIGN_IDENTITY)"
+echo "Built $APP ($VERSION, build $BUILD_NUMBER, $(lipo -archs "$APP/Contents/MacOS/$EXECUTABLE_NAME"), signed: $SIGN_IDENTITY)"
 
 if [[ "${1:-}" == "--install" ]]; then
     DEST_DIR="/Applications"
