@@ -1,6 +1,7 @@
 # Afar Desktop
 
-A remote desktop (RDP) client for the Mac, built on [FreeRDP](https://www.freerdp.com).
+A remote desktop client for the Mac, for RDP (built on [FreeRDP](https://www.freerdp.com)) and
+VNC.
 
 Afar Desktop keeps your computers in one Liquid Glass window, opens each session in its own
 native window, and makes the remote desktop follow that window: resize it, move it to another
@@ -41,6 +42,17 @@ Retina text.
 - **`.rdp` files**: import (menu, drag onto the window, or double-click a file to connect) and
   export, compatible with Microsoft's clients. Passwords are never written to the file.
 - **Remote Desktop Gateway**, with the computer's credentials or its own.
+- **VNC**, for Raspberry Pi (wayvnc and RealVNC in its VNC-password mode), TigerVNC, x11vnc and
+  other Linux servers, and macOS Screen Sharing:
+  - sign-in with VeNCrypt over TLS (X.509 certificates are checked like RDP's), Apple's
+    Diffie-Hellman login, a VNC password, or none;
+  - Tight (with JPEG when colour is set to less data), ZRLE, Hextile, CopyRect and Raw images;
+  - the remote desktop follows the window where the server can resize, and is scaled to fit
+    where it cannot; the remote cursor is drawn by this Mac;
+  - Unicode text in both directions on servers with the extended clipboard, Latin-1 elsewhere;
+  - keys sent as scancodes where the server takes them, so its own keyboard layout applies.
+- **RDP or VNC is found out** when you type the address, and every card is tagged with its
+  protocol; you can also choose it yourself.
 - **Certificate checks**: unknown or changed certificates are shown with their fingerprint
   before you connect.
 - Liquid Glass on macOS 26 and later, with a material look on earlier versions. The main
@@ -50,6 +62,11 @@ Retina text.
   follows the system language; Settings can choose another one.
 
 Not planned: spanning several displays with one session.
+
+VNC limits: there is no sound or file transfer in the protocol. RealVNC's own encryption
+(RSA-AES) is not supported yet: set RealVNC Server to "VNC password" authentication. Signing in
+to macOS Screen Sharing is implemented from its published description and has not been tested
+on a Mac yet.
 
 ## Requirements
 
@@ -95,8 +112,8 @@ and `NOTARY_PROFILE` in `config/signing.env`. Build the libraries with
 | Desktop previews | `~/Library/Application Support/Afar Desktop/Thumbnails/` (one per connection, refreshed while connected) |
 | Your own background picture | `~/Library/Application Support/Afar Desktop/Backdrop.jpg` (optional) |
 | Files downloaded from remote clipboards | `~/Library/Caches/Afar Desktop/Clipboard/` (emptied at launch) |
-| Accepted certificates | `~/Library/Application Support/Afar Desktop/FreeRDP/server/` (one per host) |
-| Passwords | Login Keychain, kind "internet password", `rdp://host` (gateway passwords under the gateway's host) |
+| Accepted certificates | `~/Library/Application Support/Afar Desktop/FreeRDP/server/` (RDP) and `…/VNC/certificates/` (VNC, a SHA-256 fingerprint), one per host and port |
+| Passwords | Login Keychain, kind "internet password", `rdp://host` or `vnc://host` (gateway passwords under the gateway's host) |
 | Settings and window positions | `defaults read <bundle id>` |
 
 Deleting a connection removes its preview, and its password and certificate when no other
@@ -107,13 +124,16 @@ connection uses them.
 ```
 Sources/AfarEngine   C glue over FreeRDP, one file per concern: Session (lifecycle,
                      authentication, certificates), Display (IOSurface framebuffer, cursor,
-                     display control), Input, Clipboard and ClipboardFiles, Statistics, Keymap
-Sources/AfarKit      Swift, no UI: RDPSession (wraps the engine), connections and their store,
-                     Keychain, .rdp files, clipboard formats, desktop layout
+                     display control), Input, Clipboard and ClipboardFiles, Statistics, Keymap;
+                     and for VNC, Stream (TCP and TLS over OpenSSL) and Codec (zlib, DH)
+Sources/AfarKit      Swift, no UI. Session/: the RemoteSession interface both protocols implement.
+                     RDP/: RDPSession (wraps the engine) and .rdp files. VNC/: the VNC client
+                     (security, decoders, keymap, extended clipboard). Also connections and their
+                     store, Keychain, protocol detection, clipboard formats, desktop layout
 Sources/AfarDesktop  The app: SwiftUI library and settings, AppKit session windows;
                      Design/Glass.swift holds every Liquid Glass availability check
-Sources/afar-probe   Command-line connection check for development (frames, resizing,
-                     clipboard text and files, statistics)
+Sources/afar-probe   Command-line connection check for development, RDP or VNC (frames,
+                     resizing, typing, clipboard text and files, statistics, protocol detection)
 Vendor/patches       Changes to FreeRDP: a VideoToolbox H.264 decoder
 Resources            Info.plist, the string catalogs (Localizable, InfoPlist), AppIcon.icon
                      (open it in Icon Composer) and the background pictures

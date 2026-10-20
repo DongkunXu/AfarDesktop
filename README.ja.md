@@ -1,6 +1,6 @@
 # Afar Desktop
 
-[FreeRDP](https://www.freerdp.com) をベースにした Mac 用リモートデスクトップ（RDP）クライアント。
+RDP（[FreeRDP](https://www.freerdp.com) ベース）と VNC に対応した Mac 用リモートデスクトップクライアント。
 
 Afar Desktop はコンピュータを 1 つの Liquid Glass ウインドウにまとめ、セッションごとにネイティブのウインドウを開きます。
 リモートデスクトップはそのウインドウに追従します。サイズを変えたり、別のディスプレイに移したり、フルスクリーンにしたりすると、
@@ -35,12 +35,26 @@ Afar Desktop はコンピュータを 1 つの Liquid Glass ウインドウに�
 - **`.rdp` ファイル**：読み込み（メニュー、ウインドウへのドラッグ、ファイルのダブルクリックで接続）と書き出しに対応し、
   Microsoft のクライアントと互換性があります。パスワードはファイルに書き込みません。
 - **リモートデスクトップゲートウェイ**：コンピュータと同じ資格情報でも、別の資格情報でも使えます。
+- **VNC**：Raspberry Pi（wayvnc。RealVNC は「VNC パスワード」認証にすると使えます）、TigerVNC、x11vnc などの
+  Linux サーバ、macOS の画面共有に接続できます。
+  - サインイン：TLS 上の VeNCrypt（X.509 証明書は RDP と同じように確認）、Apple の Diffie-Hellman ログイン、
+    VNC パスワード、またはなし。
+  - 画像：Tight（カラーで「通信量が少ない」を選ぶと JPEG）、ZRLE、Hextile、CopyRect、Raw。
+  - サーバが解像度を変えられる場合はウインドウに追従し、変えられない場合は縦横比を保って縮小・拡大します。
+    カーソルは Mac 側で描画します。
+  - 拡張クリップボードに対応したサーバとは Unicode のテキストを双方向に、それ以外とは Latin-1 でやり取りします。
+  - サーバが対応していればキーをスキャンコードで送るので、リモート側のキーボード配列がそのまま使えます。
+- **RDP か VNC かを自動判別**：アドレスを入力すると判別し、カードにはプロトコルのタグが付きます。手動でも選べます。
 - **証明書の確認**：未知の証明書や変更された証明書は、接続前に指紋とともに表示されます。
 - macOS 26 以降は Liquid Glass、それ以前はマテリアルの外観です。メインウインドウの背景は付属の画像、自分の画像、単色から選べ、
   アクセントカラーは背景から選ばれます。
 - 英語、簡体字中国語、繁体字中国語、日本語、韓国語、フランス語、イタリア語に対応。システムの言語に従い、設定で別の言語も選べます。
 
 予定していないこと：1 つのセッションで複数のディスプレイにまたがる表示。
+
+VNC の制限：プロトコルにサウンドとファイル転送はありません。RealVNC 独自の暗号化（RSA-AES）にはまだ対応していないため、
+RealVNC Server の認証を「VNC パスワード」にしてください。macOS 画面共有へのサインインは公開されている仕様に沿って実装しており、
+まだ Mac 上で試していません。
 
 ## 動作環境
 
@@ -81,8 +95,8 @@ scripts/build-app.sh --install # アプリをビルドして /Applications に�
 | デスクトップのプレビュー | `~/Library/Application Support/Afar Desktop/Thumbnails/`（接続ごとに 1 枚、接続中に更新） |
 | 自分の背景画像 | `~/Library/Application Support/Afar Desktop/Backdrop.jpg`（任意） |
 | リモートのクリップボードからダウンロードしたファイル | `~/Library/Caches/Afar Desktop/Clipboard/`（起動時に消去） |
-| 受け入れた証明書 | `~/Library/Application Support/Afar Desktop/FreeRDP/server/`（ホストごとに 1 つ） |
-| パスワード | ログインキーチェーン、種類「インターネットパスワード」、`rdp://ホスト`（ゲートウェイのパスワードはゲートウェイのホスト名で保存） |
+| 受け入れた証明書 | `~/Library/Application Support/Afar Desktop/FreeRDP/server/`（RDP）と `…/VNC/certificates/`（VNC、SHA-256 指紋）、ホストとポートごとに 1 つ |
+| パスワード | ログインキーチェーン、種類「インターネットパスワード」、`rdp://ホスト` または `vnc://ホスト`（ゲートウェイのパスワードはゲートウェイのホスト名で保存） |
 | 設定とウインドウの位置 | `defaults read <バンドル ID>` |
 
 接続を削除するとプレビューも削除され、ほかの接続で使っていなければパスワードと証明書も削除されます。
@@ -92,12 +106,13 @@ scripts/build-app.sh --install # アプリをビルドして /Applications に�
 ```
 Sources/AfarEngine   FreeRDP の C ラッパー。役割ごとにファイルを分割：Session（ライフサイクル、認証、証明書）、
                      Display（IOSurface の画面、カーソル、ディスプレイ制御）、Input、Clipboard と ClipboardFiles、
-                     Statistics、Keymap
-Sources/AfarKit      UI を持たない Swift 層：RDPSession（エンジンのラッパー）、接続とその保存、キーチェーン、
-                     .rdp ファイル、クリップボードの形式、デスクトップのレイアウト
+                     Statistics、Keymap。VNC 用に Stream（OpenSSL による TCP と TLS）と Codec（zlib、DH）
+Sources/AfarKit      UI を持たない Swift 層。Session/：両プロトコルが実装する RemoteSession インターフェイス。
+                     RDP/：RDPSession と .rdp ファイル。VNC/：VNC クライアント（セキュリティ、デコーダ、キー対応、
+                     拡張クリップボード）。ほかに接続とその保存、キーチェーン、プロトコル判別、クリップボードの形式、レイアウト
 Sources/AfarDesktop  アプリ本体：SwiftUI のメインウインドウと設定、AppKit のセッションウインドウ。
                      Liquid Glass の OS バージョン判定はすべて Design/Glass.swift にあります
-Sources/afar-probe   開発用のコマンドライン接続チェック（フレーム、リサイズ、クリップボードのテキストとファイル、統計情報）
+Sources/afar-probe   開発用のコマンドライン接続チェック。RDP と VNC に対応（フレーム、リサイズ、入力、クリップボードのテキストとファイル、統計情報、プロトコル判別）
 Vendor/patches       FreeRDP への変更：VideoToolbox による H.264 デコーダ
 Resources            Info.plist、文字列カタログ（Localizable、InfoPlist）、AppIcon.icon（Icon Composer で開けます）、背景画像
 ```

@@ -23,7 +23,7 @@ final class SessionClipboard {
 
     private(set) var transfer: Transfer?
 
-    @ObservationIgnored private weak var session: RDPSession?
+    @ObservationIgnored private weak var session: (any RemoteSession)?
     @ObservationIgnored private let downloads: URL
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var lastChangeCount = -1
@@ -33,7 +33,7 @@ final class SessionClipboard {
     /// Remote file sets up to this size download without asking.
     static let automaticDownloadLimit: UInt64 = 100 * 1024 * 1024
 
-    init(session: RDPSession, downloads: URL) {
+    init(session: any RemoteSession, downloads: URL) {
         self.session = session
         self.downloads = downloads
     }

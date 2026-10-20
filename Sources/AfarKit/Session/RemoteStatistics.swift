@@ -1,8 +1,8 @@
 import AfarEngine
 import Foundation
 
-/// A session's counters at one moment, as `RDPSession.statistics()` reads them.
-public struct RDPStatistics: Sendable {
+/// A session's counters at one moment, as `RemoteSession.statistics()` reads them.
+public struct RemoteStatistics: Sendable {
     /// The TCP connection as the system sees it.
     public struct Connection: Sendable {
         public var roundTrip: Double // milliseconds, smoothed
@@ -55,13 +55,17 @@ public struct RDPStatistics: Sendable {
     }
 }
 
+/// How the server encodes the desktop image.
 public enum VideoCodec: Sendable, Equatable {
     case uncompressed, planar, clearCodec, remoteFX, progressive
     /// H.264 (AVC420).
     case h264
     /// H.264 with full colour resolution (AVC444): sharper text.
     case h264FullColor
-    case alpha, other
+    case alpha
+    /// VNC encodings.
+    case hextile, zrle, tight, tightJPEG
+    case other
 
     init?(_ codec: AfarCodec) {
         switch codec {
@@ -97,7 +101,7 @@ public struct StatisticsSample: Equatable, Sendable {
     /// the way here (TCP hides the loss itself by resending).
     public var outOfOrderFraction: Double?
 
-    public init(from old: RDPStatistics, to new: RDPStatistics) {
+    public init(from old: RemoteStatistics, to new: RemoteStatistics) {
         let seconds = max(new.time - old.time, 0.001)
         let frames = Self.delta(old.frames, new.frames)
         framesPerSecond = Double(frames) / seconds

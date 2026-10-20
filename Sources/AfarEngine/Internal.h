@@ -161,6 +161,8 @@ UINT afar_files_receive(CliprdrClientContext *channel, const CLIPRDR_FILE_CONTEN
 void afar_input_reset_locked(AfarSession *s);
 
 // Statistics.c
+// Fills the TCP connection fields of `out` from the socket; false when it has none.
+bool afar_tcp_info(int fd, AfarStatistics *out);
 bool afar_statistics_attach(AfarSession *s);
 void afar_statistics_graphics_connected(AfarSession *s, RdpgfxClientContext *gfx);
 void afar_statistics_connection_closed(AfarSession *s);

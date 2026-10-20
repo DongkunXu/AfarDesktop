@@ -13,11 +13,12 @@ let package = Package(
         .executable(name: "AfarDesktop", targets: ["AfarDesktop"]),
     ],
     targets: [
-        // C glue over FreeRDP: connection thread, framebuffer, input, callbacks.
+        // C glue over FreeRDP (the RDP engine) and OpenSSL and zlib (transport for VNC).
         .target(
             name: "AfarEngine",
             cSettings: [
-                .unsafeFlags(["-isystem", "\(vendor)/include/freerdp3", "-isystem", "\(vendor)/include/winpr3"]),
+                .unsafeFlags(["-isystem", "\(vendor)/include/freerdp3", "-isystem", "\(vendor)/include/winpr3",
+                              "-isystem", "\(vendor)/include"]),
             ],
             linkerSettings: [
                 .unsafeFlags(["-L\(vendor)/lib"]),

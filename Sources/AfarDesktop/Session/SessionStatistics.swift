@@ -15,13 +15,13 @@ final class SessionStatistics {
     private(set) var connectedSince: Date?
     var desktopSize: PixelSize?
 
-    @ObservationIgnored private weak var session: RDPSession?
+    @ObservationIgnored private weak var session: (any RemoteSession)?
     @ObservationIgnored private var timer: Timer?
-    @ObservationIgnored private var previous: RDPStatistics?
+    @ObservationIgnored private var previous: RemoteStatistics?
 
     var latest: StatisticsSample? { history.last }
 
-    func start(_ session: RDPSession) {
+    func start(_ session: any RemoteSession) {
         stop()
         self.session = session
         history = []

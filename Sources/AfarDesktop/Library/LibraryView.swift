@@ -177,7 +177,9 @@ struct LibraryView: View {
         Button("Duplicate") {
             if let copy = model.store.duplicate(connection.id) { selection = copy.id }
         }
-        Button("Export as .rdp File…") { RDPFilePanels.export(connection) }
+        if connection.remoteProtocol == .rdp {
+            Button("Export as .rdp File…") { RDPFilePanels.export(connection) }
+        }
         Divider()
         Button("Delete…", role: .destructive) { deleting = connection }
     }

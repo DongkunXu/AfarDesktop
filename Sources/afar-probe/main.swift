@@ -1,13 +1,16 @@
 // Development tool: connects without a window, prints what happens and saves a frame.
 //
-//   afar-probe <host> [port] [--user NAME] [--seconds N] [--resize WxH[@SCALE]] [--png PATH]
-//              [--copy TEXT] [--offer FILE]... [--fetch DIR] [--click X,Y] [--stats] [--420]
+//   afar-probe <host> [port] [--vnc] [--user NAME] [--seconds N] [--resize WxH[@SCALE]] [--png PATH]
+//              [--copy TEXT] [--offer FILE]... [--fetch DIR] [--click X,Y] [--type TEXT] [--stats] [--lossy]
+//   afar-probe <host> [port] --detect
 //
 // The password is read from standard input (one line), so it never appears in the process list.
 // Certificates are accepted for this run only and printed. --copy offers TEXT and --offer files on
 // the remote clipboard; whatever the remote side copies is printed, and files it copies are
 // downloaded into --fetch DIR. --click clicks the remote desktop at X,Y two seconds after
-// connecting. --stats prints the session's statistics every second; --420 offers H.264 4:2:0 only.
+// connecting, --type types ASCII TEXT after that. --stats prints the session's statistics every second;
+// --lossy offers reduced colour detail (H.264 4:2:0 for RDP, JPEG for VNC). --vnc speaks VNC, with
+// the password alone when no --user is given. --detect only reports which protocol answers.
 
 import AfarKit
 import Foundation
@@ -17,7 +20,8 @@ import UniformTypeIdentifiers
 
 struct Options {
     var host = ""
-    var port: UInt16 = 3389
+    var remoteProtocol = RemoteProtocol.rdp
+    var port: UInt16?
     var user: String?
     var seconds = 8.0
     var resize: PixelSize?
@@ -29,6 +33,8 @@ struct Options {
     var click: (Int32, Int32)?
     var stats = false
     var fullColor = true
+    var type: String?
+    var detect = false
 }
 
 func parseOptions() -> Options {
@@ -47,7 +53,10 @@ func parseOptions() -> Options {
         case "--offer": options.offer.append(URL(fileURLWithPath: value()))
         case "--fetch": options.fetch = URL(fileURLWithPath: value())
         case "--stats": options.stats = true
-        case "--420": options.fullColor = false
+        case "--lossy": options.fullColor = false
+        case "--vnc": options.remoteProtocol = .vnc
+        case "--detect": options.detect = true
+        case "--type": options.type = value()
         case "--click":
             let parts = value().split(separator: ",").compactMap { Int32($0) }
             guard parts.count == 2 else { fail("--click expects X,Y") }
@@ -63,7 +72,7 @@ func parseOptions() -> Options {
         }
     }
     if options.host.isEmpty {
-        fail("usage: afar-probe <host> [port] [--user NAME] [--seconds N] [--resize WxH[@SCALE]] [--png PATH] [--copy TEXT] [--offer FILE]... [--fetch DIR] [--click X,Y] [--stats] [--420]")
+        fail("usage: afar-probe <host> [port] [--user NAME] [--seconds N] [--resize WxH[@SCALE]] [--png PATH] [--copy TEXT] [--offer FILE]... [--fetch DIR] [--click X,Y] [--type TEXT] [--stats] [--lossy] [--vnc]")
     }
     return options
 }
@@ -82,10 +91,10 @@ func log(_ message: String) {
 let start = Date()
 
 @MainActor
-final class Probe: RDPSessionDelegate {
+final class Probe: RemoteSessionDelegate {
     let options: Options
     let password: String?
-    let session = RDPSession()
+    let session: any RemoteSession
     var surface: IOSurface?
     var frames = 0
     var finished = false
@@ -93,15 +102,17 @@ final class Probe: RDPSessionDelegate {
     init(options: Options, password: String?) {
         self.options = options
         self.password = password
+        session = options.remoteProtocol.makeSession()
     }
 
     func run() {
         session.delegate = self
-        let config = FileManager.default.temporaryDirectory.appendingPathComponent("afar-probe")
+        let state = FileManager.default.temporaryDirectory.appendingPathComponent("afar-probe")
+        let layout = DesktopLayout(width: 1280, height: 800, desktopScale: 100, deviceScale: 100)
         do {
-            try session.connect(.init(host: options.host, port: options.port, username: options.user,
-                                      password: password, width: 1280, height: 800, fullColor: options.fullColor, audio: false,
-                                      configDirectory: config))
+            try session.connect(.init(host: options.host, port: options.remoteProtocol.port(fromAddress: options.port),
+                                      username: options.user, password: password, layout: layout,
+                                      fullColor: options.fullColor, audio: false, stateDirectory: state))
         } catch {
             fail("connect failed: \(error)")
         }
@@ -114,7 +125,7 @@ final class Probe: RDPSessionDelegate {
         session.close()
     }
 
-    func session(_ session: RDPSession, stateChanged state: RDPSession.State) {
+    func session(_ session: any RemoteSession, stateChanged state: SessionState) {
         log("state: \(state)")
         if case .disconnected = state { finished = true }
         if state == .connected, let text = options.copy {
@@ -130,70 +141,81 @@ final class Probe: RDPSessionDelegate {
             }
         }
         if state == .connected, options.stats { printStatistics(after: session.statistics()) }
+        if state == .connected, let text = options.type {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                log("typing \(text.debugDescription)")
+                for code in text.compactMap(Self.keyCode) {
+                    session.sendKey(code, down: true)
+                    session.sendKey(code, down: false)
+                }
+            }
+        }
         if state == .connected, !options.offer.isEmpty {
             log("offering \(options.offer.count) file(s)")
             session.offerFiles(options.offer)
         }
     }
 
-    func session(_ session: RDPSession, surfaceChanged surface: IOSurface, size: PixelSize) {
+    func session(_ session: any RemoteSession, surfaceChanged surface: IOSurface, size: PixelSize) {
         log("desktop \(size.width)x\(size.height)")
         self.surface = surface
     }
 
-    func session(_ session: RDPSession, frameUpdated surface: IOSurface) {
+    func session(_ session: any RemoteSession, frameUpdated surface: IOSurface) {
         self.surface = surface
         frames += 1
         if frames == 1 { log("first frame") }
     }
 
-    func sessionDisplayControlReady(_ session: RDPSession) {
+    func sessionCanResize(_ session: any RemoteSession) {
         log("display control ready")
         if let size = options.resize {
             let scale = options.resizeScale
             log("requesting \(size.width)x\(size.height) at \(scale)%")
-            session.requestLayout(width: UInt32(size.width), height: UInt32(size.height), desktopScale: scale,
-                                  deviceScale: scale >= 180 ? 180 : (scale >= 140 ? 140 : 100))
+            session.requestLayout(DesktopLayout(width: UInt32(size.width), height: UInt32(size.height), desktopScale: scale,
+                                                deviceScale: scale >= 180 ? 180 : (scale >= 140 ? 140 : 100)))
         }
     }
 
-    func session(_ session: RDPSession, verify certificate: CertificateInfo,
+    func session(_ session: any RemoteSession, verify certificate: CertificateInfo,
                  decide: @escaping @Sendable (CertificateDecision) -> Void) {
         log("certificate \(certificate.commonName) \(certificate.fingerprint)\(certificate.changed ? " (changed)" : "")")
         decide(.acceptOnce)
     }
 
-    func session(_ session: RDPSession, credentialsFor request: CredentialRequest,
+    func session(_ session: any RemoteSession, credentialsFor request: CredentialRequest,
                  provide: @escaping @Sendable (Credentials?) -> Void) {
-        log("credentials requested for \(request.username.isEmpty ? "?" : request.username); none available")
+        log("credentials requested (\(request.needsUsername ? "user name and password" : "password")); none available")
         provide(nil)
     }
 
-    func session(_ session: RDPSession, cursorCreated cursor: CursorImage) {}
-    func session(_ session: RDPSession, cursorReleased id: UInt64) {}
-    func session(_ session: RDPSession, cursorChanged cursor: RemoteCursor) {}
+    func session(_ session: any RemoteSession, cursorCreated cursor: CursorImage) {
+        log("cursor \(cursor.width)x\(cursor.height), hotspot \(Int(cursor.hotspot.x)),\(Int(cursor.hotspot.y))")
+    }
+    func session(_ session: any RemoteSession, cursorReleased id: UInt64) {}
+    func session(_ session: any RemoteSession, cursorChanged cursor: RemoteCursor) {}
 
-    func session(_ session: RDPSession, clipboardReceived content: ClipboardContent) {
+    func session(_ session: any RemoteSession, clipboardReceived content: ClipboardContent) {
         switch content {
         case .text(let text): log("remote clipboard text: \(text.prefix(80).debugDescription)")
         case .image(let image): log("remote clipboard image \(image.width)x\(image.height)")
         }
     }
 
-    func session(_ session: RDPSession, remoteFilesOffered count: Int, bytes: UInt64) {
+    func session(_ session: any RemoteSession, remoteFilesOffered count: Int, bytes: UInt64) {
         log("remote clipboard: \(count) file(s), \(bytes) bytes")
         if let directory = options.fetch { session.fetchRemoteFiles(into: directory) }
     }
 
-    func session(_ session: RDPSession, remoteFilesProgress done: UInt64, of total: UInt64) {
+    func session(_ session: any RemoteSession, remoteFilesProgress done: UInt64, of total: UInt64) {
         log("downloaded \(done) of \(total) bytes")
     }
 
-    func session(_ session: RDPSession, remoteFilesFinished success: Bool) {
+    func session(_ session: any RemoteSession, remoteFilesFinished success: Bool) {
         log(success ? "download complete" : "download failed")
     }
 
-    func printStatistics(after previous: RDPStatistics?) {
+    func printStatistics(after previous: RemoteStatistics?) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [self] in
             guard !finished, let current = session.statistics() else { return }
             if let previous {
@@ -206,6 +228,18 @@ final class Probe: RDPSessionDelegate {
             }
             printStatistics(after: current)
         }
+    }
+
+    /// US-layout key codes for lowercase letters, digits, space and return (enough for tests).
+    static func keyCode(_ character: Character) -> UInt16? {
+        let codes: [Character: UInt16] = [
+            "a": 0x00, "s": 0x01, "d": 0x02, "f": 0x03, "h": 0x04, "g": 0x05, "z": 0x06, "x": 0x07, "c": 0x08,
+            "v": 0x09, "b": 0x0B, "q": 0x0C, "w": 0x0D, "e": 0x0E, "r": 0x0F, "y": 0x10, "t": 0x11, "o": 0x1F,
+            "u": 0x20, "i": 0x22, "p": 0x23, "l": 0x25, "j": 0x26, "k": 0x28, "n": 0x2D, "m": 0x2E,
+            "1": 0x12, "2": 0x13, "3": 0x14, "4": 0x15, "5": 0x17, "6": 0x16, "7": 0x1A, "8": 0x1C, "9": 0x19,
+            "0": 0x1D, " ": 0x31, "\n": 0x24, "-": 0x1B, ".": 0x2F,
+        ]
+        return codes[character]
     }
 
     func save(_ surface: IOSurface, to url: URL) {
@@ -226,6 +260,16 @@ final class Probe: RDPSessionDelegate {
 }
 
 let options = parseOptions()
+if options.detect {
+    let semaphore = DispatchSemaphore(value: 0)
+    Task.detached { // the main thread waits below
+        let result = await ProtocolDetector.detect(host: options.host, port: options.port)
+        print(result.map { "\($0.remoteProtocol.name) on port \($0.port)" } ?? "no answer")
+        semaphore.signal()
+    }
+    semaphore.wait()
+    exit(0)
+}
 let password = isatty(STDIN_FILENO) == 0 ? readLine(strippingNewline: true) : nil
 MainActor.assumeIsolated {
     Probe(options: options, password: password).run()

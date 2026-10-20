@@ -1,4 +1,5 @@
 #include "Keymap.h"
+#include "AfarEngine.h"
 
 // Indexed by kVK_* value. Unlisted entries stay 0, which is RDP_SCANCODE_UNKNOWN.
 static const uint32_t kMacToRdp[128] = {
@@ -68,4 +69,11 @@ static const uint32_t kMacToRdp[128] = {
 
 uint32_t afar_scancode_for_mac_keycode(uint16_t keyCode) {
     return keyCode < 128 ? kMacToRdp[keyCode] : RDP_SCANCODE_UNKNOWN;
+}
+
+uint32_t afar_xt_keycode_for_mac_keycode(uint16_t keyCode) {
+    const uint32_t scancode = afar_scancode_for_mac_keycode(keyCode);
+    if (scancode == RDP_SCANCODE_UNKNOWN)
+        return 0;
+    return (scancode & 0x7F) | ((scancode & KBDEXT) ? 0x80 : 0);
 }

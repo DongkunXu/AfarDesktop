@@ -19,16 +19,19 @@ public struct DesktopLayout: Equatable, Sendable {
     /// - Parameters:
     ///   - viewSize: the area showing the desktop, in points.
     ///   - backingScale: pixels per point of the display it is on.
-    public init(display: DisplayOptions, viewSize: CGSize, backingScale: CGFloat) {
+    ///   - scalesInterface: the remote side can scale its interface. When it cannot (VNC), the
+    ///     desktop is sized in points so its interface keeps a readable size.
+    public init(display: DisplayOptions, viewSize: CGSize, backingScale: CGFloat, scalesInterface: Bool = true) {
         // Remote pixels per point: a fixed desktop is shown pixel for pixel by default.
+        let base = scalesInterface ? backingScale : 1
         let density: Double
         let pixels: (Double, Double)
         switch display.resolution {
         case .fixed(let width, let height):
-            density = backingScale
+            density = base
             pixels = (Double(width), Double(height))
         case .fitWindow:
-            density = backingScale * Double(min(100, max(25, display.renderScale))) / 100
+            density = base * Double(min(100, max(25, display.renderScale))) / 100
             pixels = ((viewSize.width * density).rounded(), (viewSize.height * density).rounded())
         }
         // The remote interface scales with the density, so it keeps its size on this screen.

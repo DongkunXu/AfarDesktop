@@ -17,8 +17,9 @@ final class SessionStatus {
     let statistics = SessionStatistics()
     /// The connection's render scale; nil for fixed-size desktops.
     var renderScale: Int?
-    /// The connection asks for 4:4:4 colour.
+    /// The connection asks for full colour detail.
     var fullColor = true
+    var remoteProtocol = RemoteProtocol.rdp
 }
 
 /// What went wrong, in words for the user.
@@ -29,7 +30,7 @@ struct SessionFailure: Equatable {
     /// The failure was about credentials, so asking for the password again may help.
     var offerPassword: Bool
 
-    init(_ error: RDPError?) {
+    init(_ error: SessionError?) {
         detail = error.flatMap { error in error.detail.map { "\($0) (0x\(String(error.code, radix: 16, uppercase: true)))" } }
         offerPassword = false
         switch error?.reason {
@@ -58,6 +59,9 @@ struct SessionFailure: Equatable {
         case .networkLost:
             title = String(localized: "Connection lost")
             message = String(localized: "The network connection to the remote computer was interrupted.")
+        case .unsupported:
+            title = String(localized: "Not supported")
+            message = String(localized: "The remote computer asks for something Afar Desktop cannot do yet.")
         case .other, nil:
             title = String(localized: "Connection ended")
             message = String(localized: "The session ended unexpectedly.")

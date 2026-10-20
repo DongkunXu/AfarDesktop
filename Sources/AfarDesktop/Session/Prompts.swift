@@ -54,7 +54,7 @@ enum CertificatePrompt {
     }
 }
 
-/// Asks for a user name and password.
+/// Asks for a user name and password, or a password alone (some VNC servers).
 enum CredentialPrompt {
     struct Result {
         var credentials: Credentials
@@ -63,7 +63,7 @@ enum CredentialPrompt {
 
     @MainActor
     static func present(on window: NSWindow, connectionName: String, gateway: Bool, username: String,
-                        completion: @escaping (Result?) -> Void) {
+                        needsUsername: Bool = true, completion: @escaping (Result?) -> Void) {
         let sheet = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
         let finish: (Result?) -> Void = { [weak window, weak sheet] result in
             if let sheet { window?.endSheet(sheet) }
@@ -72,7 +72,7 @@ enum CredentialPrompt {
         sheet.contentView = NSHostingView(rootView: CredentialForm(
             title: gateway ? String(localized: "Sign in to the gateway for \(connectionName)")
                            : String(localized: "Sign in to \(connectionName)"),
-            username: username, finish: finish))
+            username: username, needsUsername: needsUsername, finish: finish))
         sheet.setContentSize(sheet.contentView!.fittingSize)
         window.beginSheet(sheet)
     }
@@ -80,6 +80,7 @@ enum CredentialPrompt {
 
 private struct CredentialForm: View {
     let title: String
+    let needsUsername: Bool
     @State var username: String
     @State private var password = ""
     @State private var savePassword = true
@@ -88,8 +89,9 @@ private struct CredentialForm: View {
 
     enum Field { case username, password }
 
-    init(title: String, username: String, finish: @escaping (CredentialPrompt.Result?) -> Void) {
+    init(title: String, username: String, needsUsername: Bool, finish: @escaping (CredentialPrompt.Result?) -> Void) {
         self.title = title
+        self.needsUsername = needsUsername
         _username = State(initialValue: username)
         self.finish = finish
     }
@@ -104,8 +106,10 @@ private struct CredentialForm: View {
                 Text(title).font(.title3.weight(.semibold))
             }
             Form {
-                TextField("User name", text: $username)
-                    .focused($focus, equals: .username)
+                if needsUsername {
+                    TextField("User name", text: $username)
+                        .focused($focus, equals: .username)
+                }
                 SecureField("Password", text: $password)
                     .focused($focus, equals: .password)
                 Toggle("Remember password in Keychain", isOn: $savePassword)
@@ -122,12 +126,12 @@ private struct CredentialForm: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .glassProminentButtonStyle()
-                .disabled(username.isEmpty)
+                .disabled(needsUsername && username.isEmpty)
             }
             .controlSize(.large)
         }
         .padding(24)
         .frame(width: 420)
-        .onAppear { focus = username.isEmpty ? .username : .password }
+        .onAppear { focus = needsUsername && username.isEmpty ? .username : .password }
     }
 }

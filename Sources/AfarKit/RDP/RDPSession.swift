@@ -3,88 +3,20 @@ import Foundation
 import IOSurface
 import os
 
-/// One RDP connection. Wraps an `AfarSession` from the C engine.
-///
-/// The engine runs on its own thread. Everything it reports reaches the delegate on the main
-/// actor. The two questions it can ask (certificate and credentials) hold the engine thread
-/// until the delegate answers, so a dialog can stay open as long as the user needs.
-public final class RDPSession: @unchecked Sendable {
-    public enum State: Equatable, Sendable {
-        case idle
-        case connecting
-        case connected
-        case disconnected(RDPError?)
-    }
-
-    public struct Parameters: Sendable {
-        public struct GatewayParameters: Sendable {
-            public var host: String
-            public var port: UInt16
-            /// nil: sign in to the gateway with the computer's credentials.
-            public var username: String?
-            public var domain: String?
-            public var password: String?
-
-            public init(host: String, port: UInt16 = 443, username: String? = nil, domain: String? = nil,
-                        password: String? = nil) {
-                self.host = host
-                self.port = port
-                self.username = username
-                self.domain = domain
-                self.password = password
-            }
-        }
-
-        public var host: String
-        public var port: UInt16
-        public var username: String?
-        public var domain: String?
-        public var password: String?
-        public var width: UInt32
-        public var height: UInt32
-        public var desktopScale: UInt32
-        public var deviceScale: UInt32
-        public var fullColor: Bool
-        public var audio: Bool
-        public var clipboard: Bool
-        public var gateway: GatewayParameters?
-        public var configDirectory: URL
-
-        public init(host: String, port: UInt16 = 3389, username: String? = nil, domain: String? = nil,
-                    password: String? = nil, width: UInt32, height: UInt32, desktopScale: UInt32 = 100,
-                    deviceScale: UInt32 = 100, fullColor: Bool = true, audio: Bool = true, clipboard: Bool = true,
-                    gateway: GatewayParameters? = nil, configDirectory: URL) {
-            self.host = host
-            self.port = port
-            self.username = username
-            self.domain = domain
-            self.password = password
-            self.width = width
-            self.height = height
-            self.desktopScale = desktopScale
-            self.deviceScale = deviceScale
-            self.fullColor = fullColor
-            self.audio = audio
-            self.clipboard = clipboard
-            self.gateway = gateway
-            self.configDirectory = configDirectory
-        }
-    }
-
-    public weak var delegate: RDPSessionDelegate?
-    public private(set) var state: State = .idle
+/// One RDP connection. Wraps an `AfarSession` from the C engine (FreeRDP).
+public final class RDPSession: RemoteSession, @unchecked Sendable {
+    public weak var delegate: RemoteSessionDelegate?
+    public private(set) var state: SessionState = .idle
 
     private var engine: OpaquePointer?
-    /// The newest image not yet handed to the delegate. Frames arriving faster than the main
-    /// thread takes them replace each other here, so at most one main-queue hop is pending.
-    private let pendingFrame = OSAllocatedUnfairLock<IOSurface?>(uncheckedState: nil)
-    /// Answers the engine is waiting for, so closing the session can release them.
-    private let pendingAnswers = OSAllocatedUnfairLock(initialState: [DispatchSemaphore]())
+    /// Set once in init, before any thread can use it.
+    private var relay: SessionRelay<RDPSession>!
     /// The engine reports a rejected certificate as a generic TLS failure; remember the cause.
     private let certificateRejected = OSAllocatedUnfairLock(initialState: false)
 
     public init() {
         _ = RDPSession.initializeEngine
+        relay = SessionRelay(self)
     }
 
     private static let initializeEngine: Bool = afar_engine_initialize()
@@ -95,7 +27,7 @@ public final class RDPSession: @unchecked Sendable {
 
     // MARK: Lifecycle
 
-    public func connect(_ parameters: Parameters) throws {
+    public func connect(_ parameters: SessionParameters) throws {
         precondition(engine == nil, "connect called twice")
         var callbacks = AfarCallbacks()
         callbacks.context = Unmanaged.passUnretained(self).toOpaque()
@@ -112,7 +44,7 @@ public final class RDPSession: @unchecked Sendable {
         }
         callbacks.verifyCertificate = { ctx, info in
             guard let info else { return AfarCertificateReject }
-            return RDPSession.from(ctx).engineVerifyCertificate(CertificateInfo(info.pointee)).engineValue
+            return RDPSession.from(ctx).engineVerifyCertificate(CertificateInfo(engine: info.pointee)).engineValue
         }
         callbacks.authenticate = { ctx, gateway, user, userSize, pass, passSize, domain, domainSize in
             guard let user, let pass, let domain else { return false }
@@ -125,10 +57,10 @@ public final class RDPSession: @unchecked Sendable {
             let data = Data(bytes: bgra, count: Int(width) * Int(height) * 4)
             let image = CursorImage(id: id, bgra: data, width: Int(width), height: Int(height),
                                     hotspot: CGPoint(x: Int(hotX), y: Int(hotY)))
-            RDPSession.from(ctx).onMain { $0.delegate?.session($0, cursorCreated: image) }
+            RDPSession.from(ctx).relay.onMain { $0.delegate?.session($0, cursorCreated: image) }
         }
         callbacks.cursorReleased = { ctx, id in
-            RDPSession.from(ctx).onMain { $0.delegate?.session($0, cursorReleased: id) }
+            RDPSession.from(ctx).relay.onMain { $0.delegate?.session($0, cursorReleased: id) }
         }
         callbacks.cursorChanged = { ctx, kind, id in
             let cursor: RemoteCursor = switch kind {
@@ -136,10 +68,10 @@ public final class RDPSession: @unchecked Sendable {
             case AfarCursorCustom: .custom(id)
             default: .system
             }
-            RDPSession.from(ctx).onMain { $0.delegate?.session($0, cursorChanged: cursor) }
+            RDPSession.from(ctx).relay.onMain { $0.delegate?.session($0, cursorChanged: cursor) }
         }
         callbacks.displayControlReady = { ctx in
-            RDPSession.from(ctx).onMain { $0.delegate?.sessionDisplayControlReady($0) }
+            RDPSession.from(ctx).relay.onMain { $0.delegate?.sessionCanResize($0) }
         }
         callbacks.clipboardReceived = { ctx, kind, bytes, length in
             guard let bytes else { return }
@@ -150,22 +82,24 @@ public final class RDPSession: @unchecked Sendable {
             default: .fromDIB(data)
             }
             guard let content else { return }
-            RDPSession.from(ctx).onMain { $0.delegate?.session($0, clipboardReceived: content) }
+            RDPSession.from(ctx).relay.onMain { $0.delegate?.session($0, clipboardReceived: content) }
         }
         callbacks.clipboardFilesOffered = { ctx, count, bytes in
-            RDPSession.from(ctx).onMain { $0.delegate?.session($0, remoteFilesOffered: Int(count), bytes: bytes) }
+            RDPSession.from(ctx).relay.onMain { $0.delegate?.session($0, remoteFilesOffered: Int(count), bytes: bytes) }
         }
         callbacks.clipboardFilesProgress = { ctx, done, total in
-            RDPSession.from(ctx).onMain { $0.delegate?.session($0, remoteFilesProgress: done, of: total) }
+            RDPSession.from(ctx).relay.onMain { $0.delegate?.session($0, remoteFilesProgress: done, of: total) }
         }
         callbacks.clipboardFilesFinished = { ctx, success in
-            RDPSession.from(ctx).onMain { $0.delegate?.session($0, remoteFilesFinished: success) }
+            RDPSession.from(ctx).relay.onMain { $0.delegate?.session($0, remoteFilesFinished: success) }
         }
 
-        guard let engine = afar_session_new(&callbacks) else { throw RDPError.engineUnavailable }
+        guard let engine = afar_session_new(&callbacks) else { throw SessionError.engineUnavailable }
         self.engine = engine
 
-        try? FileManager.default.createDirectory(at: parameters.configDirectory, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: parameters.stateDirectory, withIntermediateDirectories: true)
+        // The size agreed at connect time is capped; display control lifts the cap afterwards.
+        let layout = parameters.layout.cappedForConnect
 
         // The engine copies every string into FreeRDP's settings before afar_session_connect returns.
         let strings = CStrings()
@@ -176,11 +110,11 @@ public final class RDPSession: @unchecked Sendable {
         params.username = strings.add(parameters.username)
         params.domain = strings.add(parameters.domain)
         params.password = strings.add(parameters.password)
-        params.configDirectory = strings.add(parameters.configDirectory.path)
-        params.width = parameters.width
-        params.height = parameters.height
-        params.desktopScale = parameters.desktopScale
-        params.deviceScale = parameters.deviceScale
+        params.configDirectory = strings.add(parameters.stateDirectory.path)
+        params.width = layout.width
+        params.height = layout.height
+        params.desktopScale = layout.desktopScale
+        params.deviceScale = layout.deviceScale
         params.fullColor = parameters.fullColor
         params.audio = parameters.audio
         params.clipboard = parameters.clipboard
@@ -192,20 +126,18 @@ public final class RDPSession: @unchecked Sendable {
             params.gatewayPassword = strings.add(gateway.password)
         }
         let ok = afar_session_connect(engine, &params)
-        guard ok else { throw RDPError.invalidParameters }
+        guard ok else { throw SessionError.invalidParameters }
         state = .connecting
     }
 
-    /// Ends the connection. The delegate sees `.disconnected` once the engine has finished.
     public func disconnect() {
-        releasePendingAnswers()
+        relay.releasePendingAnswers()
         if let engine { afar_session_disconnect(engine) }
     }
 
-    /// Ends the connection and waits for the engine thread. Safe to call more than once.
     public func close() {
         guard let engine else { return }
-        releasePendingAnswers()
+        relay.releasePendingAnswers()
         afar_session_free(engine)
         self.engine = nil
     }
@@ -233,12 +165,14 @@ public final class RDPSession: @unchecked Sendable {
         if let engine { afar_session_send_wheel(engine, vertical, horizontal, x, y) }
     }
 
-    public func requestLayout(width: UInt32, height: UInt32, desktopScale: UInt32, deviceScale: UInt32) {
-        if let engine { afar_session_request_layout(engine, width, height, desktopScale, deviceScale) }
+    public func requestLayout(_ layout: DesktopLayout) {
+        if let engine {
+            afar_session_request_layout(engine, layout.width, layout.height, layout.desktopScale, layout.deviceScale)
+        }
     }
 
-    /// Makes files and folders from this Mac available to the remote clipboard. Folders are walked
-    /// in the background; contents are read from disk only when the remote side pastes.
+    /// Folders are walked in the background; contents are read from disk only when the remote
+    /// side pastes.
     public func offerFiles(_ urls: [URL]) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let entries = ClipboardFileList(urls).entries
@@ -257,7 +191,6 @@ public final class RDPSession: @unchecked Sendable {
         }
     }
 
-    /// Downloads the files the remote side last offered (see the delegate) into `directory`.
     @discardableResult
     public func fetchRemoteFiles(into directory: URL) -> Bool {
         guard let engine else { return false }
@@ -268,15 +201,13 @@ public final class RDPSession: @unchecked Sendable {
         if let engine { afar_session_cancel_remote_files(engine) }
     }
 
-    /// The session's counters now; `StatisticsSample` turns two readings into rates.
-    public func statistics() -> RDPStatistics? {
+    public func statistics() -> RemoteStatistics? {
         guard let engine else { return nil }
         var statistics = AfarStatistics()
         guard afar_session_get_statistics(engine, &statistics) else { return nil }
-        return RDPStatistics(statistics, time: ProcessInfo.processInfo.systemUptime)
+        return RemoteStatistics(statistics, time: ProcessInfo.processInfo.systemUptime)
     }
 
-    /// Makes this Mac's clipboard available to the remote computer; nil withdraws it.
     public func offerClipboard(_ content: ClipboardContent?) {
         guard let engine else { return }
         let png = content?.pngData
@@ -298,26 +229,19 @@ public final class RDPSession: @unchecked Sendable {
         Unmanaged<RDPSession>.fromOpaque(context!).takeUnretainedValue()
     }
 
-    private func onMain(_ body: @escaping @MainActor (RDPSession) -> Void) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            MainActor.assumeIsolated { body(self) }
-        }
-    }
-
     private func engineStateChanged(_ state: AfarState, code: UInt32, message: String?) {
-        let newState: State
+        let newState: SessionState
         switch state {
         case AfarStateConnecting: newState = .connecting
         case AfarStateConnected: newState = .connected
         default:
             if certificateRejected.withLock({ $0 }) {
-                newState = .disconnected(RDPError(reason: .certificate, code: code, detail: message))
+                newState = .disconnected(SessionError(reason: .certificate, code: code, detail: message))
             } else {
-                newState = .disconnected(RDPError(code: code, message: message))
+                newState = .disconnected(SessionError(rdpCode: code, message: message))
             }
         }
-        onMain { session in
+        relay.onMain { session in
             session.state = newState
             session.delegate?.session(session, stateChanged: newState)
         }
@@ -326,65 +250,22 @@ public final class RDPSession: @unchecked Sendable {
     private func engineSurfaceChanged(_ surface: IOSurfaceRef, width: UInt32, height: UInt32) {
         let surface = unsafeBitCast(surface, to: IOSurface.self)
         let size = PixelSize(width: Int(width), height: Int(height))
-        onMain { $0.delegate?.session($0, surfaceChanged: surface, size: size) }
+        relay.onMain { $0.delegate?.session($0, surfaceChanged: surface, size: size) }
     }
 
     private func engineFrameUpdated(_ surface: IOSurfaceRef) {
-        let surface = unsafeBitCast(surface, to: IOSurface.self)
-        let alreadyPending = pendingFrame.withLockUnchecked { pending in
-            defer { pending = surface }
-            return pending != nil
-        }
-        guard !alreadyPending else { return }
-        onMain { session in
-            guard let frame = session.pendingFrame.withLockUnchecked({ pending in
-                defer { pending = nil }
-                return pending
-            }) else { return }
-            session.delegate?.session(session, frameUpdated: frame)
-        }
-    }
-
-    /// Runs `ask` on the main actor and blocks this (engine) thread until it answers.
-    private func waitForAnswer<T: Sendable>(default fallback: T,
-                                            _ ask: @escaping @MainActor (RDPSession, @escaping @Sendable (T) -> Void) -> Void) -> T {
-        let semaphore = DispatchSemaphore(value: 0)
-        let answer = OSAllocatedUnfairLock(initialState: fallback)
-        pendingAnswers.withLock { $0.append(semaphore) }
-        onMain { session in
-            ask(session) { value in
-                answer.withLock { $0 = value }
-                semaphore.signal()
-            }
-        }
-        semaphore.wait()
-        pendingAnswers.withLock { $0.removeAll { $0 === semaphore } }
-        return answer.withLock { $0 }
-    }
-
-    private func releasePendingAnswers() {
-        pendingAnswers.withLock { list in
-            list.forEach { $0.signal() }
-            list.removeAll()
-        }
+        relay.frameUpdated(unsafeBitCast(surface, to: IOSurface.self))
     }
 
     private func engineVerifyCertificate(_ info: CertificateInfo) -> CertificateDecision {
-        let decision = waitForAnswer(default: CertificateDecision.reject) { session, answer in
-            guard let delegate = session.delegate else { return answer(.reject) }
-            delegate.session(session, verify: info, decide: answer)
-        }
+        let decision = relay.verifyCertificate(info)
         if decision == .reject { certificateRejected.withLock { $0 = true } }
         return decision
     }
 
     private func engineAuthenticate(gateway: Bool, username: Buffer, password: Buffer, domain: Buffer) -> Bool {
         let request = CredentialRequest(gateway: gateway, username: username.string, domain: domain.string)
-        let credentials: Credentials? = waitForAnswer(default: nil) { session, answer in
-            guard let delegate = session.delegate else { return answer(nil) }
-            delegate.session(session, credentialsFor: request, provide: answer)
-        }
-        guard let credentials else { return false }
+        guard let credentials = relay.credentials(for: request) else { return false }
         username.store(credentials.username)
         password.store(credentials.password)
         domain.store(credentials.domain ?? "")
@@ -435,6 +316,62 @@ private struct Buffer {
         pointer.withMemoryRebound(to: UInt8.self, capacity: size) { target in
             for (index, byte) in bytes.enumerated() { target[index] = byte }
             target[bytes.count] = 0
+        }
+    }
+}
+
+// MARK: - Engine values
+
+extension SessionError {
+    static let engineUnavailable = SessionError(reason: .other, detail: "The RDP engine could not start.")
+    static let invalidParameters = SessionError(reason: .other, detail: "The connection settings were rejected.")
+
+    /// From FreeRDP's error code; `nil` when it describes a normal end of the session.
+    init?(rdpCode code: UInt32, message: String?) {
+        let reason: Reason
+        switch afar_end_reason(code) {
+        case AfarEndedNormally: return nil
+        case AfarEndedAuthentication: reason = .authentication
+        case AfarEndedCertificate: reason = .certificate
+        case AfarEndedHostNotFound: reason = .hostNotFound
+        case AfarEndedUnreachable: reason = .unreachable
+        case AfarEndedReplaced: reason = .replaced
+        case AfarEndedTimeout: reason = .timeout
+        case AfarEndedServerDenied: reason = .serverDenied
+        case AfarEndedNetworkLost: reason = .networkLost
+        default: reason = .other
+        }
+        self.init(reason: reason, code: code, detail: message)
+    }
+}
+
+private extension CertificateInfo {
+    init(engine info: AfarCertificateInfo) {
+        func string(_ pointer: UnsafePointer<CChar>?) -> String { pointer.map { String(cString: $0) } ?? "" }
+        self.init(host: string(info.host), port: info.port, commonName: string(info.commonName),
+                  subject: string(info.subject), issuer: string(info.issuer), fingerprint: string(info.fingerprint),
+                  changed: info.changed, previousFingerprint: info.oldFingerprint.map { String(cString: $0) })
+    }
+}
+
+private extension CertificateDecision {
+    var engineValue: AfarCertificateDecision {
+        switch self {
+        case .reject: AfarCertificateReject
+        case .acceptAlways: AfarCertificateAcceptAlways
+        case .acceptOnce: AfarCertificateAcceptOnce
+        }
+    }
+}
+
+private extension MouseButton {
+    var engineValue: AfarMouseButton {
+        switch self {
+        case .left: AfarMouseLeft
+        case .right: AfarMouseRight
+        case .middle: AfarMouseMiddle
+        case .back: AfarMouseBack
+        case .forward: AfarMouseForward
         }
     }
 }

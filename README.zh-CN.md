@@ -1,6 +1,6 @@
 # Afar Desktop
 
-基于 [FreeRDP](https://www.freerdp.com) 的 Mac 远程桌面（RDP）客户端。
+Mac 远程桌面客户端，支持 RDP（基于 [FreeRDP](https://www.freerdp.com)）和 VNC。
 
 Afar Desktop 把你的电脑集中在一个 Liquid Glass 窗口里管理，每个会话在独立的原生窗口中打开，远程桌面跟随窗口变化：
 拉伸窗口、拖到另一块屏幕或进入全屏，远端都会自动调整分辨率，Retina 屏上文字清晰。
@@ -25,11 +25,20 @@ Afar Desktop 把你的电脑集中在一个 Liquid Glass 窗口里管理，每�
 - **共享剪贴板**：文字、图片、文件双向互通。在 Mac 上复制的文件，远端粘贴时才读取；在远端复制的文件会下载下来供 Finder 粘贴（100 MB 以内自动下载，更大的先询问）。
 - **`.rdp` 文件**：可以导入（菜单、拖进窗口，或双击文件直接连接），也可以导出，与微软客户端兼容。文件里不写密码。
 - **RD 网关**：可以沿用电脑的凭据，也可以单独设置。
+- **VNC**：可以连树莓派（wayvnc；RealVNC 需切到"VNC 密码"模式）、TigerVNC、x11vnc 等 Linux 服务器，以及 macOS 屏幕共享：
+  - 登录方式：基于 TLS 的 VeNCrypt（X.509 证书和 RDP 一样会核对）、苹果的 Diffie-Hellman 登录、VNC 密码，或无密码；
+  - 画面编码：Tight（色彩选"流量更少"时用 JPEG）、ZRLE、Hextile、CopyRect、Raw；
+  - 服务器能改分辨率时远程桌面跟随窗口，不能改时等比缩放显示；光标由 Mac 本地绘制；
+  - 服务器支持扩展剪贴板时双向传 Unicode 文字，否则只支持 Latin-1；
+  - 服务器支持时按扫描码发送按键，远端用它自己的键盘布局。
+- **自动识别 RDP 或 VNC**：输入地址时自动判断，每张卡片都标出协议；也可以手动选择。
 - **证书检查**：遇到陌生或变更的证书，连接前显示指纹供核对。
 - macOS 26 及以上使用 Liquid Glass，更早的系统使用毛玻璃材质。主窗口背景可以选内置图片、自己的图片或纯色，强调色随背景自动选取。
 - 界面支持英文、简体中文、繁体中文、日文、韩文、法文和意大利文，默认跟随系统语言，也可以在设置里另选。
 
 不打算做：一个会话横跨多块显示器。
+
+VNC 的限制：协议本身没有声音和文件传输。RealVNC 自带的加密（RSA-AES）暂不支持，需要把 RealVNC Server 的认证方式设为"VNC 密码"。macOS 屏幕共享的登录是按公开的协议说明实现的，还没有在 Mac 上实测。
 
 ## 系统要求
 
@@ -63,8 +72,8 @@ scripts/build-app.sh --install # 编译 app，安装到“应用程序”并打�
 | 桌面预览图 | `~/Library/Application Support/Afar Desktop/Thumbnails/`（每个连接一张，连接期间定时更新） |
 | 自己的背景图 | `~/Library/Application Support/Afar Desktop/Backdrop.jpg`（可选） |
 | 从远端剪贴板下载的文件 | `~/Library/Caches/Afar Desktop/Clipboard/`（每次启动时清空） |
-| 已信任的证书 | `~/Library/Application Support/Afar Desktop/FreeRDP/server/`（每台主机一个） |
-| 密码 | 登录钥匙串，种类为“互联网密码”，`rdp://主机`（网关密码记在网关主机名下） |
+| 已信任的证书 | `~/Library/Application Support/Afar Desktop/FreeRDP/server/`（RDP）和 `…/VNC/certificates/`（VNC，存 SHA-256 指纹），每个主机和端口一个 |
+| 密码 | 登录钥匙串，种类为“互联网密码”，`rdp://主机` 或 `vnc://主机`（网关密码记在网关主机名下） |
 | 设置与窗口位置 | `defaults read <bundle id>` |
 
 删除连接时会删除它的预览图；如果没有其他连接在用，也会删除对应的密码和证书。
@@ -73,12 +82,14 @@ scripts/build-app.sh --install # 编译 app，安装到“应用程序”并打�
 
 ```
 Sources/AfarEngine   FreeRDP 的 C 封装，按职责分文件：Session（生命周期、认证、证书）、
-                     Display（IOSurface 画面、光标、显示控制）、Input、Clipboard 与 ClipboardFiles、Statistics、Keymap
-Sources/AfarKit      不含界面的 Swift 层：RDPSession、连接与存储、钥匙串、.rdp 文件、
-                     剪贴板格式、分辨率换算
+                     Display（IOSurface 画面、光标、显示控制）、Input、Clipboard 与 ClipboardFiles、Statistics、Keymap；
+                     以及 VNC 用的 Stream（基于 OpenSSL 的 TCP 和 TLS）和 Codec（zlib、DH）
+Sources/AfarKit      不含界面的 Swift 层。Session/：两种协议共同实现的 RemoteSession 接口。RDP/：RDPSession
+                     与 .rdp 文件。VNC/：VNC 客户端（安全协商、解码器、键位映射、扩展剪贴板）。另有连接与存储、
+                     钥匙串、协议识别、剪贴板格式、分辨率换算
 Sources/AfarDesktop  app 本身：SwiftUI 主窗口与设置、AppKit 会话窗口；
                      Liquid Glass 的系统版本判断全部集中在 Design/Glass.swift
-Sources/afar-probe   开发用的命令行测试工具（画面、改分辨率、剪贴板文字和文件、统计数据）
+Sources/afar-probe   开发用的命令行测试工具，RDP 和 VNC 都能测（画面、改分辨率、打字、剪贴板文字和文件、统计数据、协议识别）
 Vendor/patches       对 FreeRDP 的改动：VideoToolbox H.264 解码器
 Resources            Info.plist、字符串目录（Localizable、InfoPlist）、图标 AppIcon.icon（可用 Icon Composer 打开）和内置背景图
 ```

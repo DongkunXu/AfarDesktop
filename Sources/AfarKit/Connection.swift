@@ -5,6 +5,7 @@ import Foundation
 public struct Connection: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var name: String
+    public var remoteProtocol: RemoteProtocol
     public var host: String
     public var port: UInt16
     public var username: String
@@ -18,15 +19,17 @@ public struct Connection: Identifiable, Codable, Hashable, Sendable {
     public var created: Date
     public var lastConnected: Date?
 
-    public init(id: UUID = UUID(), name: String = "", host: String = "", port: UInt16 = 3389,
+    public init(id: UUID = UUID(), name: String = "", remoteProtocol: RemoteProtocol = .rdp,
+                host: String = "", port: UInt16? = nil,
                 username: String = "", domain: String = "", group: String = "",
                 display: DisplayOptions = DisplayOptions(), commandKey: CommandKeyMapping = .control,
                 audio: Bool = true, clipboard: Bool = true, gateway: Gateway? = nil,
                 created: Date = Date(), lastConnected: Date? = nil) {
         self.id = id
         self.name = name
+        self.remoteProtocol = remoteProtocol
         self.host = host
-        self.port = port
+        self.port = port ?? remoteProtocol.defaultPort
         self.username = username
         self.domain = domain
         self.group = group
@@ -48,10 +51,10 @@ public struct Connection: Identifiable, Codable, Hashable, Sendable {
     /// How the connection's password is labelled in Keychain Access.
     public var keychainLabel: String { "\(displayName) (Afar Desktop)" }
 
-    /// host, or host:port when the port is not the default.
+    /// host, or host:port when the port is not the protocol's default.
     public var address: String {
         let shown = host.contains(":") ? "[\(host)]" : host
-        return port == 3389 ? shown : "\(shown):\(port)"
+        return port == remoteProtocol.defaultPort ? shown : "\(shown):\(port)"
     }
 
     /// Splits "host", "host:port", "[v6]:port" or a bare IPv6 address; the port is nil when absent.
@@ -76,6 +79,7 @@ public struct Connection: Identifiable, Codable, Hashable, Sendable {
         let defaults = Connection()
         id = try c.decode(UUID.self, forKey: .id)
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? defaults.name
+        remoteProtocol = try c.decodeIfPresent(RemoteProtocol.self, forKey: .remoteProtocol) ?? defaults.remoteProtocol
         host = try c.decodeIfPresent(String.self, forKey: .host) ?? defaults.host
         port = try c.decodeIfPresent(UInt16.self, forKey: .port) ?? defaults.port
         username = try c.decodeIfPresent(String.self, forKey: .username) ?? defaults.username
@@ -89,6 +93,40 @@ public struct Connection: Identifiable, Codable, Hashable, Sendable {
         created = try c.decodeIfPresent(Date.self, forKey: .created) ?? defaults.created
         lastConnected = try c.decodeIfPresent(Date.self, forKey: .lastConnected)
     }
+}
+
+/// How the app talks to a remote computer.
+public enum RemoteProtocol: String, Codable, CaseIterable, Sendable {
+    /// Remote Desktop Protocol: Windows, GNOME, xrdp.
+    case rdp
+    /// Virtual Network Computing (RFB): Raspberry Pi, TigerVNC, x11vnc, macOS Screen Sharing.
+    case vnc
+
+    public var defaultPort: UInt16 {
+        switch self {
+        case .rdp: 3389
+        case .vnc: 5900
+        }
+    }
+
+    /// The short name shown on cards and in menus.
+    public var name: String {
+        switch self {
+        case .rdp: "RDP"
+        case .vnc: "VNC"
+        }
+    }
+
+    /// The port an address names. VNC addresses may name a display instead ("host:1" is port
+    /// 5901), as VNC viewers have always accepted.
+    public func port(fromAddress port: UInt16?) -> UInt16 {
+        guard let port else { return defaultPort }
+        return self == .vnc && port < 100 ? 5900 + port : port
+    }
+
+    /// The remote side can draw its interface at any scale (RDP). VNC servers cannot, so their
+    /// desktop is sized in points.
+    public var scalesInterface: Bool { self == .rdp }
 }
 
 /// A Remote Desktop Gateway the connection goes through.

@@ -11,7 +11,7 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
     private let sessionView = SessionView()
     private let status = SessionStatus()
     private let titleControls = NSTitlebarAccessoryViewController()
-    private var session: RDPSession?
+    private var session: (any RemoteSession)?
     private var clipboard: SessionClipboard?
     private var layoutTimer: Timer?
     private var thumbnailTimer: Timer?
@@ -106,14 +106,12 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         window?.title = connection.displayName
         window?.subtitle = connection.address
         sessionView.commandKey = connection.commandKey
-        if case .fixed = connection.display.resolution {
-            sessionView.preservesAspectRatio = true
-            status.renderScale = nil
-        } else {
-            sessionView.preservesAspectRatio = false
-            status.renderScale = connection.display.renderScale
-        }
+        let fixed = if case .fixed = connection.display.resolution { true } else { false }
+        // Many VNC servers keep their own size, so their desktop is scaled to fit, never stretched.
+        sessionView.preservesAspectRatio = fixed || connection.remoteProtocol == .vnc
+        status.renderScale = fixed ? nil : connection.display.renderScale
         status.fullColor = connection.display.fullColor
+        status.remoteProtocol = connection.remoteProtocol
         // The render scale menu comes and goes with the resolution mode. The controls take the
         // title bar's full height so they sit on its centre line.
         let titleBarHeight = window.map { $0.frame.height - $0.contentLayoutRect.height } ?? 28
@@ -122,7 +120,7 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
 
     private func defaultContentSize() -> NSSize {
         if case .fixed(let width, let height) = connection.display.resolution {
-            let scale = NSScreen.main?.backingScaleFactor ?? 2
+            let scale = connection.remoteProtocol.scalesInterface ? (NSScreen.main?.backingScaleFactor ?? 2) : 1
             return NSSize(width: CGFloat(width) / scale, height: CGFloat(height) / scale)
         }
         let visible = NSScreen.main?.visibleFrame.size ?? NSSize(width: 1440, height: 900)
@@ -133,7 +131,7 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
 
     private func connect() {
         teardownSession()
-        let session = RDPSession()
+        let session = connection.remoteProtocol.makeSession()
         session.delegate = self
         sessionView.session = session
         self.session = session
@@ -145,26 +143,23 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         let password = askForPassword ? nil : credentials.password(for: CredentialStore.Key(connection))
         askForPassword = false
         let gateway = connection.gateway.map { gateway in
-            RDPSession.Parameters.GatewayParameters(
+            SessionParameters.Gateway(
                 host: gateway.host, port: gateway.port,
                 username: gateway.usesComputerCredentials ? nil : gateway.username,
                 password: CredentialStore.Key(gatewayOf: connection).flatMap(credentials.password(for:)))
         }
-        let layout = currentLayout().cappedForConnect
 
         status.phase = .connecting(connection.displayName)
         do {
-            try session.connect(.init(
+            try session.connect(SessionParameters(
                 host: connection.host, port: connection.port,
                 username: connection.username.isEmpty ? nil : connection.username,
                 domain: connection.domain.isEmpty ? nil : connection.domain,
-                password: password,
-                width: layout.width, height: layout.height,
-                desktopScale: layout.desktopScale, deviceScale: layout.deviceScale,
-                fullColor: connection.display.fullColor, audio: connection.audio, clipboard: connection.clipboard, gateway: gateway,
-                configDirectory: model.store.paths.engine))
+                password: password, layout: currentLayout(),
+                fullColor: connection.display.fullColor, audio: connection.audio, clipboard: connection.clipboard,
+                gateway: gateway, stateDirectory: model.store.paths.state(for: connection.remoteProtocol)))
         } catch {
-            status.phase = .failed(SessionFailure(error as? RDPError))
+            status.phase = .failed(SessionFailure(error as? SessionError))
         }
     }
 
@@ -189,7 +184,8 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         let size = sessionView.bounds.width > 0 ? sessionView.bounds.size
             : (window?.contentLayoutRect.size ?? defaultContentSize())
         let backing = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
-        return DesktopLayout(display: connection.display, viewSize: size, backingScale: backing)
+        return DesktopLayout(display: connection.display, viewSize: size, backingScale: backing,
+                             scalesInterface: connection.remoteProtocol.scalesInterface)
     }
 
     /// Waits for the window to settle before asking the server for a new size.
@@ -202,9 +198,7 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
 
     private func sendLayout() {
         guard let session, isConnected else { return }
-        let layout = currentLayout()
-        session.requestLayout(width: layout.width, height: layout.height,
-                              desktopScale: layout.desktopScale, deviceScale: layout.deviceScale)
+        session.requestLayout(currentLayout())
     }
 
     // MARK: Keyboard
@@ -315,8 +309,8 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
 
 // MARK: - Session events
 
-extension SessionWindowController: RDPSessionDelegate {
-    func session(_ session: RDPSession, stateChanged state: RDPSession.State) {
+extension SessionWindowController: RemoteSessionDelegate {
+    func session(_ session: any RemoteSession, stateChanged state: SessionState) {
         guard session === self.session else { return }
         switch state {
         case .idle, .connecting:
@@ -344,26 +338,26 @@ extension SessionWindowController: RDPSessionDelegate {
         }
     }
 
-    func session(_ session: RDPSession, surfaceChanged surface: IOSurface, size: PixelSize) {
+    func session(_ session: any RemoteSession, surfaceChanged surface: IOSurface, size: PixelSize) {
         sessionView.show(surface: surface, size: size)
         status.statistics.desktopSize = size
     }
 
-    func session(_ session: RDPSession, frameUpdated surface: IOSurface) {
+    func session(_ session: any RemoteSession, frameUpdated surface: IOSurface) {
         sessionView.show(frame: surface)
     }
 
-    func sessionDisplayControlReady(_ session: RDPSession) {
+    func sessionCanResize(_ session: any RemoteSession) {
         sendLayout()
     }
 
-    func session(_ session: RDPSession, verify certificate: CertificateInfo,
+    func session(_ session: any RemoteSession, verify certificate: CertificateInfo,
                  decide: @escaping @Sendable (CertificateDecision) -> Void) {
         guard let window else { return decide(.reject) }
         CertificatePrompt.present(certificate, connectionName: connection.displayName, on: window, decide: decide)
     }
 
-    func session(_ session: RDPSession, credentialsFor request: CredentialRequest,
+    func session(_ session: any RemoteSession, credentialsFor request: CredentialRequest,
                  provide: @escaping @Sendable (Credentials?) -> Void) {
         guard let window else { return provide(nil) }
         let username: String
@@ -375,7 +369,7 @@ extension SessionWindowController: RDPSessionDelegate {
             username = connection.username
         }
         CredentialPrompt.present(on: window, connectionName: connection.displayName, gateway: request.gateway,
-                                 username: username) { [weak self] result in
+                                 username: username, needsUsername: request.needsUsername) { [weak self] result in
             guard let self, let result else { return provide(nil) }
             self.remember(result, gateway: request.gateway)
             provide(result.credentials)
@@ -402,31 +396,31 @@ extension SessionWindowController: RDPSessionDelegate {
         if let key { try? model.store.credentials.setPassword(result.credentials.password, for: key, label: label) }
     }
 
-    func session(_ session: RDPSession, cursorCreated cursor: CursorImage) {
+    func session(_ session: any RemoteSession, cursorCreated cursor: CursorImage) {
         sessionView.addCursor(cursor)
     }
 
-    func session(_ session: RDPSession, cursorReleased id: UInt64) {
+    func session(_ session: any RemoteSession, cursorReleased id: UInt64) {
         sessionView.removeCursor(id)
     }
 
-    func session(_ session: RDPSession, cursorChanged cursor: RemoteCursor) {
+    func session(_ session: any RemoteSession, cursorChanged cursor: RemoteCursor) {
         sessionView.setCursor(cursor)
     }
 
-    func session(_ session: RDPSession, clipboardReceived content: ClipboardContent) {
+    func session(_ session: any RemoteSession, clipboardReceived content: ClipboardContent) {
         clipboard?.receive(content)
     }
 
-    func session(_ session: RDPSession, remoteFilesOffered count: Int, bytes: UInt64) {
+    func session(_ session: any RemoteSession, remoteFilesOffered count: Int, bytes: UInt64) {
         clipboard?.remoteFilesOffered(count: count, bytes: bytes)
     }
 
-    func session(_ session: RDPSession, remoteFilesProgress done: UInt64, of total: UInt64) {
+    func session(_ session: any RemoteSession, remoteFilesProgress done: UInt64, of total: UInt64) {
         clipboard?.progress(done: done, total: total)
     }
 
-    func session(_ session: RDPSession, remoteFilesFinished success: Bool) {
+    func session(_ session: any RemoteSession, remoteFilesFinished success: Bool) {
         clipboard?.finish(success: success)
     }
 }

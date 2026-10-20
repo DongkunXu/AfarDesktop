@@ -1,7 +1,8 @@
 import AfarKit
 import SwiftUI
 
-/// Adds or edits a saved computer.
+/// Adds or edits a saved computer. The protocol is found out from the address (see
+/// `ProtocolDetector`) until the user picks one.
 struct ConnectionEditor: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -16,6 +17,10 @@ struct ConnectionEditor: View {
     @State private var customWidth: Int
     @State private var customHeight: Int
     @State private var errorMessage: String?
+    @State private var detection: Detection = .idle
+    /// The user chose the protocol; detection leaves it alone from then on.
+    @State private var protocolChosen: Bool
+    private let originalAddress: String
     private let hasSavedPassword: Bool
     let isNew: Bool
     let onSave: (Connection) -> Void
@@ -36,6 +41,8 @@ struct ConnectionEditor: View {
             _customHeight = State(initialValue: 1080)
         }
         hasSavedPassword = CredentialStore().hasPassword(for: .init(connection))
+        originalAddress = connection.host.isEmpty ? "" : connection.address
+        _protocolChosen = State(initialValue: !isNew)
         self.isNew = isNew
         self.onSave = onSave
     }
@@ -45,14 +52,24 @@ struct ConnectionEditor: View {
             header
             Form {
                 Section {
+                    Picker("Protocol", selection: protocolSelection) {
+                        ForEach(RemoteProtocol.allCases, id: \.self) { kind in
+                            Text(verbatim: kind.name).tag(kind)
+                        }
+                    }
+                    .pickerStyle(.segmented)
                     TextField("Computer", text: $address, prompt: Text("Name or IP address"))
+                    if let note = detection.note {
+                        note.font(.caption).foregroundStyle(.secondary)
+                    }
                     TextField("Display name", text: $draft.name,
                               prompt: address.isEmpty ? Text("Optional") : Text(verbatim: address))
                     groupField
                 }
 
                 Section("Sign-in") {
-                    TextField("User name", text: $draft.username, prompt: Text("Ask when connecting"))
+                    TextField("User name", text: $draft.username,
+                              prompt: isVNC ? Text("Optional") : Text("Ask when connecting"))
                     SecureField("Password", text: $password,
                                 prompt: hasSavedPassword && !forgetPassword ? Text("Saved in Keychain") : Text("Ask when connecting"))
                     if hasSavedPassword && password.isEmpty {
@@ -85,11 +102,13 @@ struct ConnectionEditor: View {
                     if resolution == .fitWindow {
                         RenderScalePicker(selection: $draft.display.renderScale)
                     }
-                    ColorQualityPicker(fullColor: $draft.display.fullColor)
-                    Picker("Interface scale", selection: $draft.display.scale) {
-                        Text("Automatic").tag(Int?.none)
-                        ForEach([100, 125, 150, 175, 200, 250, 300], id: \.self) { value in
-                            Text(verbatim: "\(value)%").tag(Int?.some(value))
+                    ColorQualityPicker(fullColor: $draft.display.fullColor, remoteProtocol: draft.remoteProtocol)
+                    if !isVNC { // VNC servers cannot scale their interface
+                        Picker("Interface scale", selection: $draft.display.scale) {
+                            Text("Automatic").tag(Int?.none)
+                            ForEach([100, 125, 150, 175, 200, 250, 300], id: \.self) { value in
+                                Text(verbatim: "\(value)%").tag(Int?.some(value))
+                            }
                         }
                     }
                     Toggle("Start in full screen", isOn: $draft.display.startFullScreen)
@@ -101,14 +120,18 @@ struct ConnectionEditor: View {
                         Text("Windows / Super key").tag(CommandKeyMapping.windowsKey)
                     }
                     Toggle("Share clipboard", isOn: $draft.clipboard)
-                    Toggle("Play sound on this Mac", isOn: $draft.audio)
+                    if !isVNC { // VNC carries no sound
+                        Toggle("Play sound on this Mac", isOn: $draft.audio)
+                    }
                 }
 
-                Section("Advanced") {
-                    TextField("Domain", text: $draft.domain, prompt: Text("Optional"))
-                    TextField("Gateway", text: $gatewayAddress, prompt: Text("None"))
-                    if !gatewayAddress.trimmingCharacters(in: .whitespaces).isEmpty {
-                        TextField("Gateway user name", text: $gatewayUser, prompt: Text("Same as the computer"))
+                if !isVNC {
+                    Section("Advanced") {
+                        TextField("Domain", text: $draft.domain, prompt: Text("Optional"))
+                        TextField("Gateway", text: $gatewayAddress, prompt: Text("None"))
+                        if !gatewayAddress.trimmingCharacters(in: .whitespaces).isEmpty {
+                            TextField("Gateway user name", text: $gatewayUser, prompt: Text("Same as the computer"))
+                        }
                     }
                 }
             }
@@ -117,7 +140,54 @@ struct ConnectionEditor: View {
 
             footer
         }
-        .frame(width: 500, height: 600)
+        .frame(width: 500, height: 640)
+        .task(id: address) { await detectProtocol() }
+    }
+
+    private var isVNC: Bool { draft.remoteProtocol == .vnc }
+
+    private var protocolSelection: Binding<RemoteProtocol> {
+        Binding(get: { draft.remoteProtocol }, set: { kind in
+            draft.remoteProtocol = kind
+            protocolChosen = true
+            detection = .idle
+        })
+    }
+
+    // MARK: Detection
+
+    private enum Detection: Equatable {
+        case idle, detecting, found(RemoteProtocol), noAnswer
+
+        var note: Text? {
+            switch self {
+            case .idle: nil
+            case .detecting: Text("Looking for the computer…")
+            case .found(let kind): Text("Found \(kind.name). Afar Desktop will connect with it.")
+            case .noAnswer: Text("No answer yet. Choose the protocol, or check the address.")
+            }
+        }
+    }
+
+    /// Runs shortly after typing stops; a changed address cancels the run in progress.
+    private func detectProtocol() async {
+        let typed = address.trimmingCharacters(in: .whitespaces)
+        guard !protocolChosen, !typed.isEmpty, typed != originalAddress else {
+            detection = .idle
+            return
+        }
+        try? await Task.sleep(for: .milliseconds(700))
+        guard !Task.isCancelled else { return }
+        detection = .detecting
+        let (host, port) = Connection.splitAddress(typed)
+        let result = await ProtocolDetector.detect(host: host, port: port)
+        guard !Task.isCancelled, !protocolChosen else { return }
+        if let result {
+            draft.remoteProtocol = result.remoteProtocol
+            detection = .found(result.remoteProtocol)
+        } else {
+            detection = .noAnswer
+        }
     }
 
     private var header: some View {
@@ -189,14 +259,18 @@ struct ConnectionEditor: View {
         let (host, port) = Connection.splitAddress(address)
         guard !host.isEmpty else { return }
         connection.host = host
-        connection.port = port ?? 3389
+        connection.port = connection.remoteProtocol.port(fromAddress: port)
         connection.name = connection.name.trimmingCharacters(in: .whitespaces)
         connection.group = connection.group.trimmingCharacters(in: .whitespaces)
         connection.username = connection.username.trimmingCharacters(in: .whitespaces)
         connection.domain = connection.domain.trimmingCharacters(in: .whitespaces)
 
         let gateway = gatewayAddress.trimmingCharacters(in: .whitespaces)
-        if gateway.isEmpty {
+        if connection.remoteProtocol == .vnc {
+            // Settings VNC has no use for are dropped, with the gateway password they may hold.
+            connection.gateway = nil
+            connection.domain = ""
+        } else if gateway.isEmpty {
             connection.gateway = nil
         } else {
             let (gatewayHost, gatewayPort) = Connection.splitAddress(gateway)
@@ -220,7 +294,7 @@ struct ConnectionEditor: View {
         do {
             let key = CredentialStore.Key(connection)
             if !password.isEmpty {
-                guard !connection.username.isEmpty else {
+                guard !connection.username.isEmpty || connection.remoteProtocol == .vnc else {
                     errorMessage = String(localized: "Enter a user name to save a password.")
                     return
                 }

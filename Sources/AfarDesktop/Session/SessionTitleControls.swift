@@ -62,8 +62,8 @@ struct SessionTitleControls: View {
     private var colorMenu: some View {
         Menu {
             Picker(selection: Binding(get: { status.fullColor }, set: actions.setFullColor)) {
-                ColorQualityPicker.label(fullColor: true).tag(true)
-                ColorQualityPicker.label(fullColor: false).tag(false)
+                ColorQualityPicker.label(fullColor: true, status.remoteProtocol).tag(true)
+                ColorQualityPicker.label(fullColor: false, status.remoteProtocol).tag(false)
             } label: {
                 Text("Colour")
             }
@@ -73,7 +73,7 @@ struct SessionTitleControls: View {
             HStack(spacing: 3) {
                 Image(systemName: "paintpalette")
                     .font(.system(size: 11, weight: .medium))
-                Text(verbatim: status.fullColor ? "4:4:4" : "4:2:0")
+                ColorQualityPicker.shortLabel(fullColor: status.fullColor, status.remoteProtocol)
                     .font(.system(size: 11, weight: .semibold).monospacedDigit())
             }
             // Highlighted while colour detail is reduced.
@@ -82,7 +82,8 @@ struct SessionTitleControls: View {
         .menuStyle(.button)
         .buttonStyle(.borderless)
         .menuIndicator(.hidden)
-        .frame(width: 60, height: 22)
+        .fixedSize()
+        .frame(height: 22)
         .help(Text("Colour"))
     }
 

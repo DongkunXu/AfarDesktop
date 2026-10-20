@@ -2,8 +2,8 @@
 import Testing
 
 private func reading(at time: Double, received: UInt64, frames: UInt64, decode: UInt64,
-                     sent packets: UInt64, resent: UInt64, wire: UInt64, outOfOrder: UInt64) -> RDPStatistics {
-    RDPStatistics(time: time, bytesReceived: received, bytesSent: received / 100, frames: frames,
+                     sent packets: UInt64, resent: UInt64, wire: UInt64, outOfOrder: UInt64) -> RemoteStatistics {
+    RemoteStatistics(time: time, bytesReceived: received, bytesSent: received / 100, frames: frames,
                   decodeNanoseconds: decode, codec: .h264FullColor,
                   connection: .init(roundTrip: 40, roundTripVariance: 5, packetsSent: packets,
                                     packetsRetransmitted: resent, bytesReceived: wire, outOfOrderBytes: outOfOrder))

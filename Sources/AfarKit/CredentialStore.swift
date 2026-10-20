@@ -1,28 +1,29 @@
 import Foundation
 import Security
 
-/// Passwords in the user's Keychain, as standard internet-password items keyed by
-/// server, port and account. Keychain Access lists them as "rdp://host"; connections to the
-/// same computer and user share one item, as browsers do for websites.
+/// Passwords in the user's Keychain, as standard internet-password items keyed by protocol,
+/// server, port and account. Keychain Access lists them as "rdp://host" or "vnc://host";
+/// connections to the same computer and user share one item, as browsers do for websites.
 public struct CredentialStore: Sendable {
-    /// Keychain protocol attribute for RDP (a four-character code, like "htps" for HTTPS).
-    static let rdpProtocol = "rdp "
-
     public init() {}
 
     public struct Key: Hashable, Sendable {
+        public var remoteProtocol: RemoteProtocol
         public var host: String
         public var port: UInt16
+        /// May be empty for VNC, whose servers often ask for a password alone.
         public var username: String
 
-        public init(host: String, port: UInt16, username: String) {
+        public init(remoteProtocol: RemoteProtocol = .rdp, host: String, port: UInt16, username: String) {
+            self.remoteProtocol = remoteProtocol
             self.host = host.trimmingCharacters(in: .whitespaces).lowercased()
             self.port = port
             self.username = username
         }
 
         public init(_ connection: Connection) {
-            self.init(host: connection.host, port: connection.port, username: connection.username)
+            self.init(remoteProtocol: connection.remoteProtocol, host: connection.host, port: connection.port,
+                      username: connection.username)
         }
 
         /// The gateway's own password; nil when the gateway uses the computer's credentials.
@@ -31,7 +32,15 @@ public struct CredentialStore: Sendable {
             self.init(host: gateway.host, port: gateway.port, username: gateway.username)
         }
 
-        var isUsable: Bool { !host.isEmpty && !username.isEmpty }
+        var isUsable: Bool { !host.isEmpty && (!username.isEmpty || remoteProtocol == .vnc) }
+
+        /// Keychain protocol attribute: a four-character code, like "htps" for HTTPS.
+        var keychainProtocol: String {
+            switch remoteProtocol {
+            case .rdp: "rdp "
+            case .vnc: "vnc " // kSecProtocolTypeVNC
+            }
+        }
     }
 
     private func query(_ key: Key) -> [String: Any] {
@@ -40,7 +49,7 @@ public struct CredentialStore: Sendable {
             kSecAttrServer as String: key.host,
             kSecAttrPort as String: Int(key.port),
             kSecAttrAccount as String: key.username,
-            kSecAttrProtocol as String: Self.rdpProtocol,
+            kSecAttrProtocol as String: key.keychainProtocol,
         ]
     }
 

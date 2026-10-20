@@ -7,7 +7,7 @@ import Carbon.HIToolbox
 /// The desktop image is an IOSurface shared with the engine and set as the layer's contents,
 /// so drawing costs one composite per frame and no copies on the main thread.
 final class SessionView: NSView {
-    weak var session: RDPSession?
+    weak var session: (any RemoteSession)?
     var commandKey: CommandKeyMapping = .windowsKey
     /// Fixed-size desktops keep their proportions; window-sized ones fill the view.
     var preservesAspectRatio = false {

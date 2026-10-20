@@ -30,9 +30,13 @@ struct ConnectionCard<Menu: View>: View {
                 .scaleEffect(hovering ? 1.015 : 1)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(connection.displayName)
-                    .font(.headline)
-                    .lineLimit(1)
+                HStack(spacing: 8) {
+                    Text(connection.displayName)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    protocolTag
+                }
                 Text(subtitle)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -69,6 +73,18 @@ struct ConnectionCard<Menu: View>: View {
             }
             .glassSurface(in: Rectangle())
         }
+    }
+
+    /// RDP or VNC, as a quiet outlined tag.
+    private var protocolTag: some View {
+        Text(verbatim: connection.remoteProtocol.name)
+            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+            .tracking(0.4)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .frame(height: 16)
+            .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.45), lineWidth: 0.75))
+            .accessibilityLabel(Text(verbatim: connection.remoteProtocol.name))
     }
 
     private var connectedBadge: some View {

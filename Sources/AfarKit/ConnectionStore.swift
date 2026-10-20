@@ -46,7 +46,8 @@ public final class ConnectionStore {
             || CredentialStore.Key(gatewayOf: old) != CredentialStore.Key(gatewayOf: connection) {
             releasePassword(of: old)
         }
-        if (old.host.lowercased(), old.port) != (connection.host.lowercased(), connection.port) {
+        if (old.remoteProtocol, old.host.lowercased(), old.port)
+            != (connection.remoteProtocol, connection.host.lowercased(), connection.port) {
             releaseCertificate(of: old)
         }
     }
@@ -85,11 +86,15 @@ public final class ConnectionStore {
         }
     }
 
-    /// Removes the accepted certificate once no saved connection points at that host and port.
+    /// Removes the accepted certificate once no saved connection points at that host and port
+    /// with the same protocol.
     private func releaseCertificate(of connection: Connection) {
         let host = connection.host.lowercased()
-        guard !connections.contains(where: { $0.host.lowercased() == host && $0.port == connection.port }) else { return }
-        try? FileManager.default.removeItem(at: paths.acceptedCertificate(host: connection.host, port: connection.port))
+        guard !connections.contains(where: {
+            $0.remoteProtocol == connection.remoteProtocol && $0.host.lowercased() == host && $0.port == connection.port
+        }) else { return }
+        try? FileManager.default.removeItem(at: paths.acceptedCertificate(
+            host: connection.host, port: connection.port, remoteProtocol: connection.remoteProtocol))
     }
 
     // MARK: Persistence

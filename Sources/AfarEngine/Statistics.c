@@ -75,6 +75,21 @@ void afar_statistics_graphics_connected(AfarSession *s, RdpgfxClientContext *gfx
 
 // MARK: - Reading
 
+bool afar_tcp_info(int fd, AfarStatistics *out) {
+    struct tcp_connection_info info;
+    socklen_t length = sizeof(info);
+    if (fd < 0 || getsockopt(fd, IPPROTO_TCP, TCP_CONNECTION_INFO, &info, &length) != 0)
+        return false;
+    out->hasConnectionInfo = true;
+    out->roundTripMs = info.tcpi_srtt;
+    out->roundTripVarianceMs = info.tcpi_rttvar;
+    out->packetsSent = info.tcpi_txpackets;
+    out->packetsRetransmitted = info.tcpi_txretransmitpackets;
+    out->wireBytesReceived = info.tcpi_rxbytes;
+    out->outOfOrderBytes = info.tcpi_rxoutoforderbytes;
+    return true;
+}
+
 bool afar_session_get_statistics(AfarSession *s, AfarStatistics *out) {
     if (!s || !out)
         return false;
@@ -100,17 +115,6 @@ bool afar_session_get_statistics(AfarSession *s, AfarStatistics *out) {
         }
     }
 
-    const int fd = atomic_load(&s->counters.socket);
-    struct tcp_connection_info info;
-    socklen_t length = sizeof(info);
-    if (fd >= 0 && getsockopt(fd, IPPROTO_TCP, TCP_CONNECTION_INFO, &info, &length) == 0) {
-        out->hasConnectionInfo = true;
-        out->roundTripMs = info.tcpi_srtt;
-        out->roundTripVarianceMs = info.tcpi_rttvar;
-        out->packetsSent = info.tcpi_txpackets;
-        out->packetsRetransmitted = info.tcpi_txretransmitpackets;
-        out->wireBytesReceived = info.tcpi_rxbytes;
-        out->outOfOrderBytes = info.tcpi_rxoutoforderbytes;
-    }
+    (void)afar_tcp_info(atomic_load(&s->counters.socket), out);
     return true;
 }

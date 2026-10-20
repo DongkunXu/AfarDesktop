@@ -1,9 +1,12 @@
-// AfarEngine: a small C interface over FreeRDP for the Swift app.
+// AfarEngine: a small C interface over FreeRDP and OpenSSL for the Swift app.
 //
 // One AfarSession is one RDP connection. It runs FreeRDP on its own thread and reports back
 // through AfarCallbacks, invoked on FreeRDP's threads. Callbacks marked "blocking" wait for
 // an answer, so the app may show a dialog before returning.
 // Every other function may be called from any thread.
+//
+// The VNC client is written in Swift and uses the lower-level pieces at the end of this file:
+// AfarStream (TCP with optional TLS), AfarInflater (zlib) and a few helpers.
 
 #ifndef AFAR_ENGINE_H
 #define AFAR_ENGINE_H
@@ -229,6 +232,77 @@ void afar_session_cancel_remote_files(AfarSession *session);
 // Reads the session's counters. Meant for one regular reader: `codec` covers the time since the
 // previous call.
 bool afar_session_get_statistics(AfarSession *session, AfarStatistics *statistics);
+
+// MARK: - Streams
+
+// A TCP connection with optional TLS, read by one thread at a time. Writes may come from any
+// thread: they are queued and sent by the reading thread, which flushes them before and while
+// it waits for data, so TLS state is only ever touched by that thread.
+typedef struct AfarStream AfarStream;
+
+typedef enum {
+    AfarStreamOK = 0,
+    AfarStreamHostNotFound,
+    AfarStreamRefused,
+    AfarStreamTimeout,
+    AfarStreamClosed,    // the other side closed the connection
+    AfarStreamCancelled, // afar_stream_cancel was called
+    AfarStreamTLSFailed,
+    AfarStreamFailed,
+} AfarStreamStatus;
+
+// The peer's TLS certificate, for the app to decide whether to trust it.
+typedef struct {
+    char commonName[256];
+    char subject[512];
+    char issuer[512];
+    char fingerprint[100]; // SHA-256, lowercase hex pairs separated by colons
+} AfarPeerCertificate;
+
+AfarStream *afar_stream_new(void);
+void afar_stream_free(AfarStream *stream);
+// Connects to the first address of `host` that answers within `timeoutMs`.
+AfarStreamStatus afar_stream_connect(AfarStream *stream, const char *host, uint16_t port, int timeoutMs);
+// Waits until `length` bytes have arrived.
+AfarStreamStatus afar_stream_read(AfarStream *stream, void *buffer, size_t length);
+// Queues bytes for sending (any thread).
+void afar_stream_write(AfarStream *stream, const void *data, size_t length);
+// Sends what is queued, then performs a TLS handshake on the connection. `anonymous` uses
+// anonymous Diffie-Hellman suites (no certificate); otherwise `peer` describes the certificate,
+// which is not verified here.
+AfarStreamStatus afar_stream_start_tls(AfarStream *stream, const char *serverName, bool anonymous,
+                                       AfarPeerCertificate *peer);
+// Makes the current and every later read or connect fail with AfarStreamCancelled (any thread).
+void afar_stream_cancel(AfarStream *stream);
+// Fills the traffic totals and the TCP connection fields of `statistics` (any thread).
+void afar_stream_statistics(AfarStream *stream, AfarStatistics *statistics);
+// Nanoseconds the reading thread has spent waiting for data so far.
+uint64_t afar_stream_wait_nanoseconds(AfarStream *stream);
+
+// MARK: - zlib
+
+// One zlib stream that keeps its state across chunks, as VNC encodings require.
+typedef struct AfarInflater AfarInflater;
+
+AfarInflater *afar_inflater_new(void);
+void afar_inflater_free(AfarInflater *inflater);
+void afar_inflater_reset(AfarInflater *inflater);
+// Inflates all of `input`. Returns the inflater's own buffer (valid until the next call) and
+// its length, or NULL for corrupt data.
+const uint8_t *afar_inflate(AfarInflater *inflater, const uint8_t *input, size_t length, size_t *outputLength);
+// Deflates `input` as one complete zlib stream into a buffer the caller frees.
+uint8_t *afar_deflate(const uint8_t *input, size_t length, size_t *outputLength);
+
+// MARK: - Helpers
+
+// The XT scancode of a macOS virtual key code in QEMU's numbering (0xE0-prefixed codes have
+// bit 7 set); 0 when the key has none.
+uint32_t afar_xt_keycode_for_mac_keycode(uint16_t macKeyCode);
+
+// Diffie-Hellman agreement for Apple Remote Desktop authentication. `prime`, `serverPublic`,
+// `clientPublic` and `secret` are `length` bytes, big-endian.
+bool afar_dh_agree(const uint8_t *generator, size_t generatorLength, const uint8_t *prime,
+                   const uint8_t *serverPublic, size_t length, uint8_t *clientPublic, uint8_t *secret);
 
 #ifdef __cplusplus
 }

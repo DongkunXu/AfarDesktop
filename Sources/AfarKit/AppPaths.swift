@@ -37,6 +37,16 @@ public struct AppPaths: Sendable {
     public var backdrop: URL { root.appendingPathComponent("Backdrop.jpg") }
     /// FreeRDP's own state: one accepted certificate per host and port.
     public var engine: URL { root.appendingPathComponent("FreeRDP", isDirectory: true) }
+    /// The VNC client's own state: one accepted certificate fingerprint per host and port.
+    public var vnc: URL { root.appendingPathComponent("VNC", isDirectory: true) }
+
+    /// Where a session of this protocol keeps its state.
+    public func state(for remoteProtocol: RemoteProtocol) -> URL {
+        switch remoteProtocol {
+        case .rdp: engine
+        case .vnc: vnc
+        }
+    }
 
     public func thumbnail(for id: UUID) -> URL {
         thumbnails.appendingPathComponent("\(id.uuidString).jpg")
@@ -44,11 +54,19 @@ public struct AppPaths: Sendable {
 
     /// The certificate FreeRDP accepted for a host, named the way FreeRDP names it
     /// (libfreerdp/crypto/certificate_data.c).
-    public func acceptedCertificate(host: String, port: UInt16) -> URL {
-        let name = "\(host)_\(port).pem".lowercased()
+    public func acceptedCertificate(host: String, port: UInt16, remoteProtocol: RemoteProtocol = .rdp) -> URL {
+        let name = "\(host)_\(port)".lowercased()
             .replacingOccurrences(of: ":", with: ".")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "\\", with: "_")
-        return engine.appendingPathComponent("server", isDirectory: true).appendingPathComponent(name)
+        return Self.acceptedCertificate(named: name, in: state(for: remoteProtocol), remoteProtocol: remoteProtocol)
+    }
+
+    /// The same file, given the session's state directory (sessions know only that).
+    static func acceptedCertificate(named name: String, in directory: URL, remoteProtocol: RemoteProtocol) -> URL {
+        switch remoteProtocol {
+        case .rdp: directory.appendingPathComponent("server", isDirectory: true).appendingPathComponent(name + ".pem")
+        case .vnc: directory.appendingPathComponent("certificates", isDirectory: true).appendingPathComponent(name + ".sha256")
+        }
     }
 }
