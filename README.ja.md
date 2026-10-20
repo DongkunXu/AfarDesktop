@@ -35,8 +35,9 @@ Afar Desktop はコンピュータを 1 つの Liquid Glass ウインドウに�
 - **`.rdp` ファイル**：読み込み（メニュー、ウインドウへのドラッグ、ファイルのダブルクリックで接続）と書き出しに対応し、
   Microsoft のクライアントと互換性があります。パスワードはファイルに書き込みません。
 - **リモートデスクトップゲートウェイ**：コンピュータと同じ資格情報でも、別の資格情報でも使えます。
-- **VNC**：Raspberry Pi（wayvnc。RealVNC は「VNC パスワード」認証にすると使えます）、TigerVNC、x11vnc などの
-  Linux サーバ、macOS の画面共有に接続できます。
+- **VNC**（新機能。まだ十分にテストしていないため、不安定だったり不具合があったりする場合があります）：
+  Raspberry Pi、TigerVNC、x11vnc などの Linux サーバ、macOS の画面共有に接続できます。サーバはパスワードによる
+  サインインを使う必要があります。RealVNC Server では認証を「VNC パスワード」にしてください。
   - サインイン：TLS 上の VeNCrypt（X.509 証明書は RDP と同じように確認）、Apple の Diffie-Hellman ログイン、
     VNC パスワード、またはなし。
   - 画像：Tight（カラーで「通信量が少ない」を選ぶと JPEG）、ZRLE、Hextile、CopyRect、Raw。
@@ -53,8 +54,7 @@ Afar Desktop はコンピュータを 1 つの Liquid Glass ウインドウに�
 予定していないこと：1 つのセッションで複数のディスプレイにまたがる表示。
 
 VNC の制限：プロトコルにサウンドとファイル転送はありません。RealVNC 独自の暗号化（RSA-AES）にはまだ対応していないため、
-RealVNC Server の認証を「VNC パスワード」にしてください。macOS 画面共有へのサインインは公開されている仕様に沿って実装しており、
-まだ Mac 上で試していません。
+RealVNC Server では「VNC パスワード」認証が必要です。
 
 ## 動作環境
 

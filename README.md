@@ -42,8 +42,9 @@ Retina text.
 - **`.rdp` files**: import (menu, drag onto the window, or double-click a file to connect) and
   export, compatible with Microsoft's clients. Passwords are never written to the file.
 - **Remote Desktop Gateway**, with the computer's credentials or its own.
-- **VNC**, for Raspberry Pi (wayvnc and RealVNC in its VNC-password mode), TigerVNC, x11vnc and
-  other Linux servers, and macOS Screen Sharing:
+- **VNC** (new, not yet fully tested: it may be unstable or have bugs), for Raspberry Pi,
+  TigerVNC, x11vnc and other Linux servers, and macOS Screen Sharing. The server has to sign in
+  with a password: on RealVNC Server, set authentication to "VNC password".
   - sign-in with VeNCrypt over TLS (X.509 certificates are checked like RDP's), Apple's
     Diffie-Hellman login, a VNC password, or none;
   - Tight (with JPEG when colour is set to less data), ZRLE, Hextile, CopyRect and Raw images;
@@ -63,10 +64,8 @@ Retina text.
 
 Not planned: spanning several displays with one session.
 
-VNC limits: there is no sound or file transfer in the protocol. RealVNC's own encryption
-(RSA-AES) is not supported yet: set RealVNC Server to "VNC password" authentication. Signing in
-to macOS Screen Sharing is implemented from its published description and has not been tested
-on a Mac yet.
+VNC limits: the protocol carries no sound and no files. RealVNC's own encryption (RSA-AES) is not
+supported yet, which is why RealVNC Server needs "VNC password" authentication.
 
 ## Requirements
 

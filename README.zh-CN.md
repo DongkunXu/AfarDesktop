@@ -25,7 +25,7 @@ Afar Desktop 把你的电脑集中在一个 Liquid Glass 窗口里管理，每�
 - **共享剪贴板**：文字、图片、文件双向互通。在 Mac 上复制的文件，远端粘贴时才读取；在远端复制的文件会下载下来供 Finder 粘贴（100 MB 以内自动下载，更大的先询问）。
 - **`.rdp` 文件**：可以导入（菜单、拖进窗口，或双击文件直接连接），也可以导出，与微软客户端兼容。文件里不写密码。
 - **RD 网关**：可以沿用电脑的凭据，也可以单独设置。
-- **VNC**：可以连树莓派（wayvnc；RealVNC 需切到"VNC 密码"模式）、TigerVNC、x11vnc 等 Linux 服务器，以及 macOS 屏幕共享：
+- **VNC**（新功能，尚未完整测试，可能不稳定或有 bug）：可以连树莓派、TigerVNC、x11vnc 等 Linux 服务器，以及 macOS 屏幕共享。服务器需要使用密码登录模式：RealVNC Server 要把认证方式设为"VNC 密码"。
   - 登录方式：基于 TLS 的 VeNCrypt（X.509 证书和 RDP 一样会核对）、苹果的 Diffie-Hellman 登录、VNC 密码，或无密码；
   - 画面编码：Tight（色彩选"流量更少"时用 JPEG）、ZRLE、Hextile、CopyRect、Raw；
   - 服务器能改分辨率时远程桌面跟随窗口，不能改时等比缩放显示；光标由 Mac 本地绘制；
@@ -38,7 +38,7 @@ Afar Desktop 把你的电脑集中在一个 Liquid Glass 窗口里管理，每�
 
 不打算做：一个会话横跨多块显示器。
 
-VNC 的限制：协议本身没有声音和文件传输。RealVNC 自带的加密（RSA-AES）暂不支持，需要把 RealVNC Server 的认证方式设为"VNC 密码"。macOS 屏幕共享的登录是按公开的协议说明实现的，还没有在 Mac 上实测。
+VNC 的限制：协议本身没有声音和文件传输。RealVNC 自带的加密（RSA-AES）暂不支持，所以 RealVNC Server 需要用"VNC 密码"认证。
 
 ## 系统要求
 
