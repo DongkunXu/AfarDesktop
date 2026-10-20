@@ -31,6 +31,10 @@ fetch() { # url sha256
     echo "$file"
 }
 
+# Libraries remember the directory they were configured for; a neutral one keeps the builder's
+# own paths (and user name) out of the app. Each architecture installs into a staging root.
+INSTALL_PREFIX=/opt/afar-desktop
+
 build_openssl() { # arch dest
     local arch=$1 dest=$2 src="$WORK/$1/openssl"
     local target=darwin64-$arch-cc
@@ -40,10 +44,10 @@ build_openssl() { # arch dest
         cd "$src"
         # /private/etc/ssl holds the system CA bundle (cert.pem) maintained by macOS.
         ./Configure "$target" no-shared no-module no-tests no-docs no-apps \
-            --prefix="$dest" --libdir=lib --openssldir=/private/etc/ssl \
+            --prefix="$INSTALL_PREFIX" --libdir=lib --openssldir=/private/etc/ssl \
             -mmacosx-version-min="$MACOS_DEPLOYMENT_TARGET" >/dev/null
         make -j"$JOBS" build_libs >/dev/null
-        make install_dev >/dev/null
+        make install_dev DESTDIR="$WORK/$arch/stage" >/dev/null
     )
 }
 
@@ -56,11 +60,12 @@ build_freerdp() { # arch dest
     done
     # Only our own prefix may satisfy dependencies: anything found in Homebrew would end up
     # linked into the app without being shipped.
-    PKG_CONFIG_LIBDIR="$dest/lib/pkgconfig" cmake -S "$src" -B "$bld" -G Ninja \
+    PKG_CONFIG_LIBDIR="$dest/lib/pkgconfig" PKG_CONFIG_SYSROOT_DIR="$WORK/$arch/stage" \
+    cmake -S "$src" -B "$bld" -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_OSX_ARCHITECTURES="$arch" \
         -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET" \
-        -DCMAKE_INSTALL_PREFIX="$dest" \
+        -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
         -DCMAKE_PREFIX_PATH="$dest" \
         -DCMAKE_IGNORE_PREFIX_PATH="/opt/homebrew;/usr/local;/opt/local" \
         -DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF \
@@ -82,7 +87,7 @@ build_freerdp() { # arch dest
         -DCHANNEL_SERIAL=OFF -DCHANNEL_PARALLEL=OFF -DCHANNEL_SMARTCARD=OFF -DCHANNEL_REMDESK=OFF \
         >"$WORK/$arch/freerdp-configure.log"
     cmake --build "$bld" -j"$JOBS" >"$WORK/$arch/freerdp-build.log"
-    cmake --install "$bld" >/dev/null
+    DESTDIR="$WORK/$arch/stage" cmake --install "$bld" >/dev/null
 }
 
 # Folds every static library of one architecture into a single archive.
@@ -93,7 +98,7 @@ merge_libs() { # arch dest
 
 rm -rf "$WORK"
 for arch in $ARCHS; do
-    dest="$WORK/$arch/prefix"
+    dest="$WORK/$arch/stage$INSTALL_PREFIX"
     echo "==> OpenSSL $OPENSSL_VERSION ($arch)"
     build_openssl "$arch" "$dest"
     echo "==> FreeRDP $FREERDP_VERSION ($arch)"
@@ -103,7 +108,7 @@ done
 
 rm -rf "$PREFIX"
 mkdir -p "$PREFIX/lib"
-first="$WORK/${ARCHS[1]}/prefix"
+first="$WORK/${ARCHS[1]}/stage$INSTALL_PREFIX"
 cp -R "$first/include" "$PREFIX/include"
 cd "$WORK"
 lipo -create "${ARCHS[@]/%//libAfarFreeRDP.a}" -output "$PREFIX/lib/libAfarFreeRDP.a"

@@ -18,7 +18,9 @@ let package = Package(
             name: "AfarEngine",
             cSettings: [
                 .unsafeFlags(["-isystem", "\(vendor)/include/freerdp3", "-isystem", "\(vendor)/include/winpr3",
-                              "-isystem", "\(vendor)/include"]),
+                              "-isystem", "\(vendor)/include",
+                              // Source paths in log messages, relative to the repository.
+                              "-fmacro-prefix-map=\(root)/="]),
             ],
             linkerSettings: [
                 .unsafeFlags(["-L\(vendor)/lib"]),
