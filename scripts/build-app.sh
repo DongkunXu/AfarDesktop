@@ -30,6 +30,8 @@ APP="$STAGED_APP"
 _afar_remove_staged_app
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$EXECUTABLE_NAME"
+# Debug symbols name every source and build path on this machine; the app ships without them.
+strip -S -x "$APP/Contents/MacOS/$EXECUTABLE_NAME"
 sed -e "s/\$(BUNDLE_ID)/$BUNDLE_ID/" -e "s/\$(VERSION)/$VERSION/" -e "s/\$(BUILD_NUMBER)/$BUILD_NUMBER/" \
     "$ROOT/Resources/Info.plist" >"$APP/Contents/Info.plist"
 # The icon is an Icon Composer document: actool renders the Liquid Glass icon into Assets.car
