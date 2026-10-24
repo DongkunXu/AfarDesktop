@@ -16,6 +16,8 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
     private var layoutTimer: Timer?
     private var thumbnailTimer: Timer?
     private var keyUpMonitor: Any?
+    private var desktopTopInWindow: NSLayoutConstraint!
+    private var desktopTopInFullScreen: NSLayoutConstraint!
     /// The next attempt asks for the password instead of using the saved one.
     private var askForPassword = false
     private var closing = false
@@ -52,12 +54,16 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
             .environment(model))
         overlay.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(overlay)
-        // The desktop sits below the title bar; in full screen the title bar slides over it.
+        // The desktop sits below the title bar in a window. In full screen it fills the screen and
+        // the title bar slides over it: following the title bar there would resize the remote
+        // desktop each time the pointer reaches the top of the screen.
+        desktopTopInWindow = sessionView.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor)
+        desktopTopInFullScreen = sessionView.topAnchor.constraint(equalTo: container.topAnchor)
         NSLayoutConstraint.activate([
             sessionView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             sessionView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             sessionView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            sessionView.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor),
+            desktopTopInWindow,
             overlay.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             overlay.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             overlay.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor),
@@ -114,9 +120,12 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         status.remoteProtocol = connection.remoteProtocol
         // The render scale menu comes and goes with the resolution mode. The controls take the
         // title bar's full height so they sit on its centre line.
-        let titleBarHeight = window.map { $0.frame.height - $0.contentLayoutRect.height } ?? 28
-        titleControls.view.frame.size = NSSize(width: titleControls.view.fittingSize.width, height: titleBarHeight)
+        titleControls.view.frame.size = NSSize(width: titleControls.view.fittingSize.width, height: Self.titleBarHeight)
     }
+
+    /// The standard title bar's height. It comes from the window style: in full screen the
+    /// window itself has no title bar, so its geometry would give 0.
+    private static let titleBarHeight = NSWindow.frameRect(forContentRect: .zero, styleMask: .titled).height
 
     private func defaultContentSize() -> NSSize {
         if case .fixed(let width, let height) = connection.display.resolution {
@@ -216,6 +225,25 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
     }
 
     // MARK: Window
+
+    func windowWillEnterFullScreen(_ notification: Notification) {
+        setDesktopFillsWindow(true)
+    }
+
+    func windowWillExitFullScreen(_ notification: Notification) {
+        setDesktopFillsWindow(false)
+    }
+
+    /// When full screen fails, the window keeps its windowed layout.
+    func windowDidFailToEnterFullScreen(_ window: NSWindow) {
+        setDesktopFillsWindow(false)
+    }
+
+    private func setDesktopFillsWindow(_ fills: Bool) {
+        let (used, unused) = fills ? (desktopTopInFullScreen!, desktopTopInWindow!) : (desktopTopInWindow!, desktopTopInFullScreen!)
+        unused.isActive = false
+        used.isActive = true
+    }
 
     func windowDidResignKey(_ notification: Notification) {
         sessionView.releaseInput()
